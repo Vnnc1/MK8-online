@@ -38,6 +38,7 @@ pub fn run() -> Result<i32> {
     );
 
     crate::fonts::configure(&request.local)?;
+    crate::fsr::configure(&request.local)?;
     crate::debug_options::configure(&request.local)?;
     std::env::remove_var("MK8_SETTINGS_ROMFS");
     if !request.nextendo && std::env::var("MK8_SETTINGS_EXPERIMENT").as_deref() == Ok("1") {

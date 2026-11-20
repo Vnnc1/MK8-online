@@ -1,24 +1,24 @@
 """Opt-in Settings entry experiment for the verified MK8 4.0.1 top menu."""
-import hashlib
 from pathlib import Path
+
+from guest_source import verified_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
 UNIT = 'main_114.c'
-SOURCE_SHA256 = 'ace7dcd1961f46f6213dfe20d2dc534e1854f48401040aa2ae6d6be0f7d960cf'
+SOURCE_SHA256 = 'bea4142aaec02e8af9285c1de21be90d1209546c56e81a11019411b799a5b0b9'
 ENTRY = 'void f_70004d92e8(Cpu *c) {'
-BUILD_SHA256 = '4b4cf4a1aec1b9d1d0479a920a3fbf46fe518d23d7624a19caea00808f7d88f7'
-NAV_SHA256 = 'c6d46af3e71b558fa38894d3b26de9569671c93a026f7a0cce99eb2e16707082'
-TICK_SHA256 = 'e7f979c9bae346fca7da9f76349d27eeec5fcc4b23c87b43d396c39b605ef048'
-SHARED_HASHES = {'main_100.c': '187122fd53c501e91020efb776088154977181fd647ba02cf084d1e9d4c518cc',
-                 'main_191.c': 'f61eefe25d08a209796ba4519ea8aa491121f2f85089715fe63fbb7fa029d133'}
+BUILD_SHA256 = 'ab615528d5a4d6ca6a734a47130e2d583c816f90d1731da9aaef780058ff9210'
+NAV_SHA256 = 'bcacfa659a58ddf02404e9923512e29ae324fa507b9187ba8fd7218660389f13'
+TICK_SHA256 = '02f16954f504ab999adcbc1a7036bd7010f72430b422e07f8f3b6b4004414b96'
+SHARED_HASHES = {'main_100.c': '3134491b6aa0511945779190419987f6650d3349aecbc78392c12455a26eeef6',
+                 'main_191.c': '2ae69dad8c0b61bb97d87ae4e49e96d5057a31e8645584ea054d8e063d872043'}
 
 
 def patch_guest(source, original, output):
     if original.parent.name != 'main' or original.name not in (UNIT, 'main_113.c', 'main_082.c', 'main_115.c', *SHARED_HASHES):
         return source
     expected = {UNIT: SOURCE_SHA256, 'main_113.c': BUILD_SHA256, 'main_082.c': NAV_SHA256, 'main_115.c': TICK_SHA256, **SHARED_HASHES}[original.name]
-    if hashlib.sha256(original.read_bytes()).hexdigest() != expected:
-        raise ValueError('Settings experiment requires verified MK8 4.0.1 top-menu code')
+    verified_bytes(original, expected, 'Settings experiment requires verified MK8 4.0.1 top-menu code')
     text = source.read_text(encoding='utf-8').replace('\r\n', '\n')
     if original.name in SHARED_HASHES:
         function, marker, hook = ('f_700049a8fc', '    { uint64_t ea = c->x[19] + 0x1f0ull; ST32(ea, 0u); }', 'mk8_settings_shared_build') if original.name == 'main_100.c' else (

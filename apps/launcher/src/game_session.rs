@@ -38,6 +38,7 @@ pub fn run() -> Result<i32> {
     );
 
     crate::fonts::configure(&request.local)?;
+    crate::fsr::configure(&request.local)?;
     crate::debug_options::configure(&request.local)?;
     std::env::remove_var("MK8_SETTINGS_ROMFS");
     if !request.nextendo && std::env::var("MK8_SETTINGS_EXPERIMENT").as_deref() == Ok("1") {
@@ -48,8 +49,7 @@ pub fn run() -> Result<i32> {
                 .get("settings-layout")
                 .ok_or("Rebuild the game to combine CTGP with native Settings.")?;
             let output = request.local.join("derived/settings-ctgp");
-            let mut command =
-                std::process::Command::new(request.root.join("local/python/Scripts/python.exe"));
+            let mut command = std::process::Command::new(crate::setup::local_python(&request.root));
             command
                 .arg(request.root.join("toolchain/settings_layout.py"))
                 .arg(&menu.path)

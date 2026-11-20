@@ -26,11 +26,16 @@ impl Step {
     }
 }
 
-fn local_python(root: &Path) -> PathBuf {
-    root.join("local/python/Scripts/python.exe")
+pub(crate) fn local_python(root: &Path) -> PathBuf {
+    root.join(if cfg!(windows) {
+        "local/python/Scripts/python.exe"
+    } else {
+        "local/python/bin/python"
+    })
 }
 
 /// The same three commands documented in the README, in order.
+#[cfg(windows)]
 pub fn steps(root: &Path) -> Result<Vec<Step>, String> {
     let scripts = root.join("scripts");
     Ok(vec![
@@ -50,6 +55,18 @@ pub fn steps(root: &Path) -> Result<Vec<Step>, String> {
             &[&"-u", &scripts.join("setup-runtime-deps.py")],
         ),
     ])
+}
+
+#[cfg(target_os = "linux")]
+pub fn steps(root: &Path) -> Result<Vec<Step>, String> {
+    let python = std::env::var_os("MK8_PYTHON312")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("python3.12"));
+    Ok(vec![Step::new(
+        "Ferramentas Linux",
+        python,
+        &[&"-u", &root.join("scripts/setup-linux.py")],
+    )])
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -78,7 +95,7 @@ pub struct Setup {
     clean_after_setup: bool,
     current: usize,
     child: Option<Child>,
-    guards: Vec<File>,
+    guards: Vec<mk8_build_manager::ResourceGuard>,
     supervised: Option<(PathBuf, PathBuf)>,
     state: State,
     detail: String,
@@ -254,6 +271,8 @@ impl Setup {
             self.guards.clear();
             mk8_build_manager::supervisor::spawn(&cmd, root, local, &self.log)
         } else {
+            #[cfg(target_os = "linux")]
+            mk8_build_manager::isolate_process_group(&mut cmd);
             cmd.spawn().map_err(|e| e.to_string())
         };
         match spawned {
@@ -296,7 +315,13 @@ impl Setup {
                                     if tool_checks(root).iter().any(|check| check["ok"] != true) {
                                         return Err("A instalação das ferramentas não passou na verificação.".into());
                                     }
-                                    crate::managed::clean_old_tools(root).map_err(|e| e.to_string())
+                                    #[cfg(windows)]
+                                    {
+                                        crate::managed::clean_old_tools(root).map_err(|e| e.to_string())?;
+                                    }
+                                    #[cfg(not(windows))]
+                                    let _ = root;
+                                    Ok(())
                                 });
                             if let Err(e) = result {
                                 self.fail(format!("Limpeza das ferramentas anteriores: {e}"));
@@ -393,6 +418,7 @@ fn python_check(root: &Path) -> Value {
 }
 
 /// Reads `NAME = 'value'` from a setup script so the expected paths follow it.
+#[cfg(windows)]
 pub(crate) fn script_constant(text: &str, name: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let rest = line
@@ -409,6 +435,7 @@ pub(crate) fn script_constant(text: &str, name: &str) -> Option<String> {
 
 /// Pinned packages as `setup-runtime-deps.py` computes them: the pins listed in
 /// the upstream fetch script plus the extra appended in the Python script.
+#[cfg(windows)]
 pub fn pinned_packages(fetch_script: &str, deps_script: &str) -> Vec<(String, String)> {
     let is_hash = |s: &str| {
         s.len() == 64
@@ -436,12 +463,14 @@ pub fn pinned_packages(fetch_script: &str, deps_script: &str) -> Vec<(String, St
 
 /// Zig, graphics libraries and FFmpeg: the folder shared by the launcher versions
 /// (`MK8_NATIVE_TOOLS`, see `main::share_tools`), or `local/native-tools` when running from source.
+#[cfg(windows)]
 fn tools_dir(root: &Path) -> std::path::PathBuf {
     std::env::var_os("MK8_NATIVE_TOOLS")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| root.join("local/native-tools"))
 }
 
+#[cfg(windows)]
 pub fn tool_checks(root: &Path) -> Vec<Value> {
     let mut checks = vec![python_check(root)];
     let native = fs::read_to_string(root.join("scripts/setup-native.py")).unwrap_or_default();
@@ -495,6 +524,7 @@ pub fn tool_checks(root: &Path) -> Vec<Value> {
     checks
 }
 
+#[cfg(windows)]
 fn runtime_ready(root: &Path, tools: &Path) -> bool {
     let Ok(raw) = fs::read(tools.join("deps/runtime-ready.json")) else {
         return false;
@@ -548,7 +578,29 @@ fn runtime_ready(root: &Path, tools: &Path) -> bool {
     .all(|name| names.contains(*name))
 }
 
-#[cfg(test)]
+#[cfg(target_os = "linux")]
+pub fn tool_checks(root: &Path) -> Vec<Value> {
+    let python = local_python(root);
+    let ready = Command::new(&python)
+        .arg(root.join("scripts/setup-linux.py"))
+        .arg("--check")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    vec![
+        python_check(root),
+        check(
+            "Compilador e bibliotecas Linux".into(),
+            ready,
+            if ready {
+                "Dependências encontradas.".into()
+            } else {
+                "Execute Ferramentas e confira as dependências Linux.".into()
+            },
+        ),
+    ]
+}
+
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

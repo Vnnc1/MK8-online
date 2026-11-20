@@ -71,6 +71,8 @@ pub struct App {
     resources_state: &'static str,
     resources_detail: String,
     mii_download: crate::mii_download::Download,
+    /// The child running the terms-gated FSR SDK download/build.
+    fsr_job: Option<crate::fsr::install::Job>,
     /// Steam lobby invites received from friends (lobby, friend), until accepted or the room is gone.
     steam_invites: Vec<(u64, u64)>,
     /// After creating or entering a Steam room: open the game in it as soon as the transport connects.
@@ -195,6 +197,7 @@ impl App {
             resources_state: "idle",
             resources_detail: String::new(),
             mii_download: Default::default(),
+            fsr_job: None,
             steam_invites: Vec::new(),
             pending_play: None,
             steam_auto_join,
@@ -414,8 +417,12 @@ impl App {
         }
         self.poll_native();
         self.poll_resources();
+        self.poll_fsr();
         if self.native_job.is_some() || self.resources_job.is_some() {
             return Err("Aguarde a conversão Mii terminar.".into());
+        }
+        if self.fsr_job.is_some() {
+            return Err("Aguarde a instalação do FSR terminar.".into());
         }
         if self.game.is_some() {
             return Err("O jogo já está aberto.".into());
@@ -555,6 +562,35 @@ impl App {
         value["state"] = json!(self.native_state);
         value["detail"] = json!(self.native_detail);
         Ok(value)
+    }
+
+    fn poll_fsr(&mut self) {
+        let Some(job) = self.fsr_job.as_mut() else {
+            return;
+        };
+        match job.poll() {
+            Ok(None) => (),
+            Ok(Some(exit)) => {
+                if !exit.success() {
+                    job.record_interruption(&format!(
+                        "A instalação do FSR terminou com erro ({exit}). Consulte o log."
+                    ));
+                }
+                self.fsr_job = None;
+            }
+            Err(error) => {
+                let _ = job.cancel();
+                job.record_interruption(&format!(
+                    "Não foi possível consultar a instalação do FSR: {error}"
+                ));
+                self.fsr_job = None;
+            }
+        }
+    }
+
+    fn fsr_page(&mut self) -> Result<Value> {
+        self.poll_fsr();
+        crate::fsr::page(&self.root, &self.local, self.fsr_job.is_some())
     }
 
     fn store_config(&mut self, config: Config) -> Result<()> {
@@ -800,6 +836,7 @@ impl App {
     fn handle(&mut self, method: &Method, path: &str, body: &str) -> Result<Value> {
         self.dlc_import.poll();
         self.ctgp_import.poll();
+        self.poll_fsr();
         if method == &Method::Post
             && self.imports_running()
             && !matches!(path, "/api/language" | "/api/browse" | "/api/dlc/files")
@@ -826,6 +863,7 @@ impl App {
             ("GET", "/api/fonts") => crate::fonts::status(&self.local),
             ("POST", "/api/settings")
             | ("POST", "/api/fonts")
+            | ("POST", "/api/fsr/settings")
             | ("POST", "/api/dlc/toggle")
             | ("POST", "/api/dlc/import")
             | ("POST", "/api/ctgp/toggle")
@@ -871,6 +909,15 @@ impl App {
                     return Ok(
                         json!({"message":"Configurações salvas. As alterações valem ao iniciar o jogo."}),
                     );
+                }
+                if path == "/api/fsr/settings" {
+                    let settings: crate::fsr::Settings =
+                        serde_json::from_str(body).map_err(|_| "Preferências FSR inválidas.")?;
+                    crate::fsr::write_settings(&self.local, &settings)?;
+                    return Ok(json!({
+                        "settings": settings,
+                        "message": "Preferências FSR salvas. Valem ao iniciar o jogo.",
+                    }));
                 }
                 let install = self.installation().or_else(|| self.candidate()).ok_or(
                     if path.starts_with("/api/ctgp/") {
@@ -971,6 +1018,75 @@ impl App {
             }
             ("GET", "/api/dlc/log") => Ok(json!({"text":self.log_tail("dlc.log")?})),
             ("GET", "/api/ctgp/log") => Ok(json!({"text":self.log_tail("ctgp.log")?})),
+            ("GET", "/api/fsr") => self.fsr_page(),
+            ("POST", "/api/fsr/license") => {
+                let dir = crate::fsr::data_dir();
+                let text = crate::fsr::install::fetch_license(&dir)?;
+                Ok(json!({
+                    "text": text,
+                    "license": crate::fsr::license_status(&dir),
+                    "message": "Licença da AMD carregada da fonte oficial (SDK v2.4.0).",
+                }))
+            }
+            ("POST", "/api/fsr/accept") => {
+                let dir = crate::fsr::data_dir();
+                crate::fsr::install::accept_terms(&dir)?;
+                Ok(json!({
+                    "license": crate::fsr::license_status(&dir),
+                    "message": "Termos da AMD aceitos. O download só começa quando você pedir.",
+                }))
+            }
+            ("POST", "/api/fsr/install") => {
+                self.poll_fsr();
+                if self.fsr_job.is_some() {
+                    return Err("A instalação do FSR já está em andamento.".into());
+                }
+                self.status();
+                if self.session_busy()
+                    || self.setup.running()
+                    || self.imports_running()
+                    || self.build.poll().state == "running"
+                {
+                    return Err(
+                        "Feche o jogo e aguarde a operação atual antes de instalar o FSR.".into(),
+                    );
+                }
+                let settings = crate::fsr::read_settings(&self.local)?;
+                if cfg!(windows) {
+                    let gate = crate::fsr::fsr4_gate(&settings);
+                    if crate::fsr::fsr4_selection_blocked(&settings, &gate) {
+                        return Err(gate.reason);
+                    }
+                }
+                if cfg!(target_os = "linux")
+                    && settings.upscaling != "3.1.6"
+                    && settings.upscaling != "4.1.2"
+                    && settings.frame_generation != "fsr3"
+                {
+                    return Err(
+                        "Nada para instalar: selecione FSR 3.1.6, FSR 4.1.2 ou FSR 3 nos componentes locais."
+                            .into(),
+                    );
+                }
+                if !crate::fsr::terms_accepted(&crate::fsr::data_dir()) {
+                    return Err("Leia e aceite a licença da AMD antes de baixar o SDK.".into());
+                }
+                self.fsr_job = Some(crate::fsr::install::Job::start(
+                    &self.root,
+                    &self.local,
+                    &settings,
+                )?);
+                self.fsr_page()
+            }
+            ("POST", "/api/fsr/cancel") => {
+                if let Some(mut job) = self.fsr_job.take() {
+                    job.cancel()?;
+                }
+                Ok(json!({"message":"Instalação do FSR cancelada."}))
+            }
+            ("GET", "/api/fsr/log") => Ok(json!({
+                "text": crate::fsr::install::log_tail(&crate::fsr::data_dir(), 200),
+            })),
             ("GET", "/api/status") => Ok(self.status()),
             ("GET", "/api/config") => Ok(serde_json::to_value(&self.config).unwrap()),
             ("GET", "/api/username") => Ok(json!(self.username)),
@@ -1550,10 +1666,14 @@ impl App {
                     return Err("Disponível apenas na janela do Launcher.".into());
                 }
                 fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
-                std::process::Command::new("explorer.exe")
-                    .arg(&folder)
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                std::process::Command::new(if cfg!(windows) {
+                    "explorer.exe"
+                } else {
+                    "xdg-open"
+                })
+                .arg(&folder)
+                .spawn()
+                .map_err(|e| e.to_string())?;
                 Ok(json!({"message":"Pasta aberta."}))
             }
             ("POST", "/api/support/github") => {
@@ -1570,17 +1690,27 @@ impl App {
                         value["body"].as_str().unwrap_or(""),
                     )?
                 };
-                let executable = std::env::var_os("SystemRoot")
-                    .map(|root| PathBuf::from(root).join("System32/rundll32.exe"))
-                    .filter(|path| path.is_file())
-                    .ok_or("Não foi possível localizar o abridor de links do Windows.")?;
-                let mut command = std::process::Command::new(executable);
-                command.args(["url.dll,FileProtocolHandler", url.as_str()]);
+                #[cfg(target_os = "linux")]
+                let mut command = {
+                    let mut command = std::process::Command::new("xdg-open");
+                    command.arg(url.as_str());
+                    command
+                };
                 #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    command.creation_flags(0x08000000);
-                }
+                let mut command = {
+                    let executable = std::env::var_os("SystemRoot")
+                        .map(|root| PathBuf::from(root).join("System32/rundll32.exe"))
+                        .filter(|path| path.is_file())
+                        .ok_or("Não foi possível localizar o abridor de links do Windows.")?;
+                    let mut command = std::process::Command::new(executable);
+                    command.args(["url.dll,FileProtocolHandler", url.as_str()]);
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        command.creation_flags(0x08000000);
+                    }
+                    command
+                };
                 command.spawn().map_err(|e| e.to_string())?;
                 Ok(json!({"message":"Abrindo o GitHub no navegador. Revise antes de publicar."}))
             }
@@ -1630,7 +1760,7 @@ fn binary_response(req: Request, code: u16, bytes: Vec<u8>, mime: &str) {
 /// answering status requests while the dialog is open.
 fn browse(req: Request, body: &str, parent: &DialogParent) {
     let value: Value = serde_json::from_str(body).unwrap_or_default();
-    let language = value["language"].as_str().unwrap_or("pt-BR").to_string();
+    let language = value["language"].as_str().unwrap_or("en").to_string();
     let current = value["current"].as_str().unwrap_or("").to_string();
     let filter = match value["kind"].as_str() {
         Some("dlc") => Some((
@@ -1667,6 +1797,23 @@ fn browse(req: Request, body: &str, parent: &DialogParent) {
                 "Biblioteca de partes Mii",
             ),
             &["dat"][..],
+        )),
+        Some("fsr-library") => Some((
+            crate::language::pick(&language, "Provedor FFX", "FFX provider", "Proveedor FFX"),
+            if cfg!(windows) {
+                &["dll"][..]
+            } else {
+                &["so"][..]
+            },
+        )),
+        Some("dxc") => Some((
+            crate::language::pick(
+                &language,
+                "Compilador DXC",
+                "DXC compiler",
+                "Compilador DXC",
+            ),
+            &["*"][..],
         )),
         _ => None,
     };
@@ -1820,6 +1967,24 @@ pub fn serve(mut app: App, server: Server, authority: String, url: String, token
                 200,
                 include_str!("../web/installation.css").into(),
                 "text/css; charset=utf-8",
+            );
+            continue;
+        }
+        if method == Method::Get && path == "/fsr.css" {
+            response(
+                req,
+                200,
+                include_str!("../web/fsr.css").into(),
+                "text/css; charset=utf-8",
+            );
+            continue;
+        }
+        if method == Method::Get && path == "/fsr.js" {
+            response(
+                req,
+                200,
+                include_str!("../web/fsr.js").into(),
+                "text/javascript; charset=utf-8",
             );
             continue;
         }
@@ -2141,6 +2306,41 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn fsr_settings_route_persists_and_rejects_the_unavailable_mlfi_mode() {
+        let root = std::env::temp_dir().join(format!("mk8-fsr-route-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut app = App::new(root.clone(), root.clone(), Config::default(), None);
+        let provider = if cfg!(windows) {
+            r"C:\\fsr\\provider.dll"
+        } else {
+            "/opt/fsr.so"
+        };
+        let body = format!(
+            r#"{{"upscaling":"3.1.6","provider_lib":"{provider}","frame_generation":"fsr3","dxc":"/opt/dxc","legacy_abi":true}}"#
+        );
+        let value = app
+            .handle(&Method::Post, "/api/fsr/settings", &body)
+            .unwrap();
+        assert_eq!(value["settings"]["upscaling"], "3.1.6");
+        assert_eq!(value["settings"]["frame_generation"], "fsr3");
+        let settings = crate::fsr::read_settings(&root).unwrap();
+        assert_eq!(settings.upscaling, "3.1.6");
+        assert!(settings.legacy_abi);
+
+        let error = app
+            .handle(
+                &Method::Post,
+                "/api/fsr/settings",
+                r#"{"upscaling":"off","provider_lib":"","frame_generation":"fsr4","dxc":"","legacy_abi":false}"#,
+            )
+            .unwrap_err();
+        assert!(error.contains("FSR 4 MLFI"), "{error}");
+        assert_eq!(crate::fsr::read_settings(&root).unwrap(), settings);
+        drop(app);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     struct LocalSteamFixture;
     impl steam::P2PBackend for LocalSteamFixture {
         fn local_user(&self) -> u64 {
@@ -2153,6 +2353,20 @@ mod tests {
         fn recv(&self, _: i32, _: &mut [u8]) -> Option<(usize, u64)> {
             None
         }
+    }
+
+    fn test_shell(windows: &str, unix: &str) -> std::process::Command {
+        let mut command = if cfg!(windows) {
+            std::process::Command::new("cmd.exe")
+        } else {
+            std::process::Command::new("sh")
+        };
+        command.args(if cfg!(windows) {
+            ["/C", windows]
+        } else {
+            ["-c", unix]
+        });
+        command
     }
 
     #[test]
@@ -2178,10 +2392,7 @@ mod tests {
             } else {
                 drop(host);
             }
-            let mut child = std::process::Command::new("cmd.exe")
-                .args(["/C", "exit 0"])
-                .spawn()
-                .unwrap();
+            let mut child = test_shell("exit 0", "exit 0").spawn().unwrap();
             child.wait().unwrap();
             app.game = Some(child);
             app.prepare_steam_join().unwrap();
@@ -2211,8 +2422,7 @@ mod tests {
         drop(host);
         // A running game must never be stopped or detached by a new invitation.
         app.game = Some(
-            std::process::Command::new("cmd.exe")
-                .args(["/C", "set /p value="])
+            test_shell("set /p value=", "read value")
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::null())
                 .spawn()

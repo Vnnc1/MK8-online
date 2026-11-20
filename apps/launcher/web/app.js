@@ -368,6 +368,9 @@ document.querySelectorAll("[data-browse]").forEach((button) => {
       }
       if (input.id === "ctgp-source") return { message: "Pasta selecionada." };
       if (input.id === "prepare-dlc-package") return { message: "Arquivo selecionado." };
+      if (input.id === "fsr-provider" || input.id === "fsr-dxc") {
+        return await window.mk8Fsr.afterBrowse(input.id);
+      }
       await saveGameFileConfig();
       return { message: "Arquivo selecionado." };
     });
@@ -974,7 +977,7 @@ async function refresh() {
     }
     const status = await refresh();
     const linkedTab = location.hash.slice(1);
-    if (["install", "settings", "play", "miis", "session", "support"].includes(linkedTab)) showTab(linkedTab);
+    if (["install", "settings", "play", "miis", "session", "support", "fsr"].includes(linkedTab)) showTab(linkedTab);
     else if (status.tools_ready && (status.candidate || status.installed) && !status.candidate_stale) showTab("play");
     i18n.text($("update-state"), "Versão instalada: " + status.version);
     if (status.updates.configured) api("update/check", {}).then(renderUpdate).catch(() => {});

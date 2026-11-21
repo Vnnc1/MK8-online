@@ -349,7 +349,7 @@ static bool keycap_tips(Cpu *c,const char *description,const char *const keys_te
             if(keys[i]>button_columns[i%2]) button_columns[i%2]=keys[i];
         }
         // Use the two join captions' rendered widths so both words start in one column.
-        if(show_chords && i<2) verbs[i]=i ? 264 : 440;
+        if(show_chords && i==0) verbs[i]=440;
     }
     for(unsigned i=0;i<n;i++) {
         widths[i]=(roster ? button_columns[i%2] : keys[i])+8+verbs[i];
@@ -762,13 +762,13 @@ static void controller_draw(Cpu *c,enum Mk8EditState state,int listening,const u
     static enum ControllerPanel last_panel;
     static enum Mk8EditState last_state;
     static int previous_player;
-    bool enrolling=controller_listening(state), combined=enrolling && mk8_edit_has_combined();
+    bool enrolling=controller_listening(state), paired=enrolling && mk8_edit_has_pair();
     bool keyboard=controller_required && mk8_controller_join_keyboard();
-    static bool last_combined,last_keyboard;
+    static bool last_paired,last_keyboard;
     int player=enrolling ? listening : controller_panel==PLAYERS ? -1 : action_player;
     bool source_changed=read_tips(false);
     bool changed=refresh || source_changed || last_panel!=controller_panel || last_state!=state || previous_player!=player ||
-        combined!=last_combined || keyboard!=last_keyboard;
+        paired!=last_paired || keyboard!=last_keyboard;
     if(changed) {
         const char *heading="Controller assignment", *help=NULL;
         const char *left="Cancel", *right="Apply";
@@ -794,7 +794,7 @@ static void controller_draw(Cpu *c,enum Mk8EditState state,int listening,const u
                 help="Release both shoulder buttons to join."; break;
             case MK8_EDIT_NEED_LEFT: help="Hold [R]. Press [L] on the left Joy-Con."; break;
             case MK8_EDIT_NEED_RIGHT: help="Hold [L]. Press [R] on the right Joy-Con."; break;
-            default: help=combined && !controller_required ? "For separate halves, use F1: Individual." :
+            default: help=paired ? "SL + SR on one Joy-Con splits the pair." :
                 "To pair two Joy-Cons, hold L and R."; break;
             }
         } else if(state==MK8_EDIT_FAILED) help="Assign every player a connected input.";
@@ -816,7 +816,8 @@ static void controller_draw(Cpu *c,enum Mk8EditState state,int listening,const u
         else if(state==MK8_EDIT_LISTEN && keycaps[0]) {
             const char *key[]={"SL","SR",keyboard ? "Enter" : tips.label[MK8_TIP_BACK]};
             bool chords=join_buttons[0]!=0;
-            const char *verb[]={chords ? "Controller or paired Joy-Cons" : "+",chords ? "Sideways Joy-Con" : "Join sideways",
+            const char *sideways=paired ? "Join sideways or split pair" : "Sideways Joy-Con";
+            const char *verb[]={chords ? "Controller or paired Joy-Cons" : "+",chords ? sideways : "Join sideways",
                                 keyboard ? "Join keyboard" : back_tip.verb};
             bool third=keyboard || ((symbol_help || tips.source==MK8_TIP_KEYBOARD) && *key[2] && strcmp(key[2],"(none)"));
             keycap_tips(c,chords ? NULL : help,key,verb,third ? 3 : 2,NULL,chords,keyboard);
@@ -878,7 +879,7 @@ static void controller_draw(Cpu *c,enum Mk8EditState state,int listening,const u
             text(c,labels[i+1],controller_panel==ROW_ACTIONS ? actions[i] : label);
             if(controller_panel==ROW_ACTIONS) text(c,values[i+1],"");
         }
-        last_panel=controller_panel; last_state=state; previous_player=player; last_combined=combined; last_keyboard=keyboard;
+        last_panel=controller_panel; last_state=state; previous_player=player; last_paired=paired; last_keyboard=keyboard;
         controller_highlight(c);
     }
     if(controller_panel!=ROW_ACTIONS) controller_labels(c,names,changed);
@@ -1396,8 +1397,14 @@ void mk8_settings_page_tick(uint64_t page, bool open) {
 void mk8_settings_page_frame(uint64_t manager) {
     uint64_t end=HEAP_BASE+kernel_heap_size();
     uint64_t page=race_heap(manager,0xc70,end) ? LD64(manager+0xc68) : 0;
-    mk8_title_input_active(race_heap(page,0x128,end) && LD64(page)==MAIN_BASE+0x127cb38 &&
-                           LD32(page+0x120)==4 && LD32(page+0x124)==0 && !mk8_auto_lan_requested());
+    enum Mk8TitlePhase title_input=MK8_TITLE_INACTIVE;
+    if(race_heap(page,0x128,end) && LD64(page)==MAIN_BASE+0x127cb38 && !mk8_auto_lan_requested()) {
+        unsigned phase=LD32(page+0x120),step=LD32(page+0x124);
+        if (phase==3 && step==0) title_input=MK8_TITLE_PRELUDE;
+        else if (phase==3 && step>=1 && step<=3) title_input=MK8_TITLE_ENTRANCE;
+        else if (phase==4 && step==0) title_input=MK8_TITLE_PROMPT;
+    }
+    mk8_title_input_phase(title_input);
     unsigned players=shared_race_scene(manager);
     if (players != shared_race) {
         mk8_input_race_players(players);

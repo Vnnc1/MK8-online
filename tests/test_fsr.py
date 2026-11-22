@@ -11,6 +11,7 @@ import fsr
 
 
 EXEC = '''\
+#include "vk.h"
 static NvnTexture *g_pass_depth;  // (its depth target)
 enum { FG_DUMMY = 20, N_POST = 21 };
 static void render_pass(void) {
@@ -72,7 +73,8 @@ class FsrPatchTests(unittest.TestCase):
         fsr.prepare(runtime)
         exec_c = (runtime / 'nvn/vulkan/exec.c').read_text(encoding='utf-8')
         self.assertIn('mk8_fsr4_upscale', exec_c)
-        self.assertIn('if (!smaa && !fsr && !getenv("MK8_FSR4") && !getenv("MK8_DLSS")) return v;', exec_c)
+        self.assertIn('if (!smaa && !fsr && !getenv("MK8_FSR4") && !getenv("MK8_DLSS")) {', exec_c)
+        self.assertIn('mk8_graphics_result("native", b->width, b->height, ow, oh);', exec_c)
         self.assertIn('mk8_fsr_last_depth', exec_c)
         self.assertIn('g_fsr_depth = st.rt.depth;', exec_c)
         self.assertGreater(exec_c.index('mk8_fsr4_upscale'), exec_c.index('vk_frame_suspend();'))
@@ -85,7 +87,7 @@ class FsrPatchTests(unittest.TestCase):
         self.assertNotIn('g_fsr_jitter_', exec_c)
         # The log format must survive as an escape, not as a real newline in the C string.
         self.assertIn('view/proj captured in main draw\\n")', exec_c)
-        self.assertLess(exec_c.index('if (getenv("MK8_FSR4") || getenv("MK8_DLSS"))'),
+        self.assertLess(exec_c.index('if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG") || getenv("MK8_DLSS_FG"))'),
                         exec_c.index('debug_draw(pr, r, indexed);'))
 
     def test_rejects_a_missing_main_draw(self):

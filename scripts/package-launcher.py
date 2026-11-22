@@ -18,6 +18,40 @@ BUILD = TARGET / "package"
 WINDOWS = os.name == "nt"
 LAUNCHER = "Launcher.exe" if WINDOWS else "Launcher"
 
+MANIFEST = ROOT / "upstream/manifests/smm2recomp.json"
+SOURCE_EXTENSIONS = {".c", ".cpp", ".h", ".inc", ".json", ".mk", ".ps1", ".py", ".txt", ".cs"}
+
+
+def payload_files():
+    yield ROOT / "LICENSE"
+    yield MANIFEST
+    yield ROOT / "toolchain/mii_assembly.html"
+    yield ROOT / "runtime/mk8/graphics/ffx/LICENSE"
+    yield ROOT / "runtime/mk8/windows.manifest"
+    yield ROOT / "runtime/mk8/windows.rc"
+    importer = ROOT / "tools/mk8-import"
+    for name in ("mk8-import.dll", "mk8-import.runtimeconfig.json", "LibHac.dll", "build-sha256.txt"):
+        yield importer / name
+    yield importer / "dotnet/dotnet.exe"
+    for path in sorted((importer / "dotnet").rglob("*")):
+        if path.is_file() and path.suffix in {".dll", ".json", ".txt"}:
+            yield path
+    for folder in ("runtime", "toolchain", "games/mk8d", "scripts", "docs/licenses"):
+        for path in sorted((ROOT / folder).rglob("*")):
+            if path.is_file() and path.suffix in SOURCE_EXTENSIONS:
+                yield path
+    # The runtime executable built from these same sources (scripts/prebuild-host.py); a build checks its key.
+    for name in ("mk8drecomp.exe", "mk8drecomp.dll.a", "manifest.json"):
+        yield ROOT / "prebuilt/host" / name
+    # The minimal FFmpeg (scripts/build-ffmpeg.py) with its LGPL notices; the build checks every hash.
+    manifest = json.loads((ROOT / "prebuilt/ffmpeg/manifest.json").read_text(encoding="utf-8"))
+    for name in (*manifest["files"], "manifest.json", "LICENSE.md", "COPYING.LGPLv2.1", "configuration.txt"):
+        yield ROOT / "prebuilt/ffmpeg" / name
+    for name, digest in sorted(json.loads(MANIFEST.read_text(encoding="utf-8"))["files"].items()):
+        path = ROOT / "upstream/smm2recomp" / name
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise ValueError(f"Upstream alterado: {name}")
+        yield path
 
 
 def main():

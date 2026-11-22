@@ -446,22 +446,46 @@ fn pump(api: &Api) {
 
 // Flat C accessors are versioned exports; SteamUser() and friends are normally
 // C++ header helpers, not DLL exports. Keep legacy exports for existing adapters.
-// Do not guess newer ABI versions or substitute an unrelated interface.
+// Each list holds only versions whose flat functions used here, their callback IDs
+// and structures are identical in the Steamworks SDK 1.52-1.65 steam_api.json
+// (issues #69-#71, #73). Do not guess newer ABI versions or substitute an unrelated interface.
+const STEAM_USER: &[&CStr] = &[
+    c"SteamAPI_SteamUser_v023",
+    c"SteamAPI_SteamUser_v022",
+    c"SteamAPI_SteamUser_v021",
+];
+const STEAM_FRIENDS: &[&CStr] = &[c"SteamAPI_SteamFriends_v017", c"SteamAPI_SteamFriends_v018"];
+const STEAM_MATCHMAKING: &[&CStr] = &[c"SteamAPI_SteamMatchmaking_v009"];
+const STEAM_NETWORKING: &[&CStr] = &[c"SteamAPI_SteamNetworking_v006"];
+const STEAM_UTILS: &[&CStr] = &[c"SteamAPI_SteamUtils_v010", c"SteamAPI_SteamUtils_v011"];
+
 fn resolve_interface(
-    versioned: &CStr,
+    versioned: &[&CStr],
     legacy: &CStr,
     mut lookup: impl FnMut(&CStr) -> Result<InterfaceAccessor>,
 ) -> Result<InterfaceAccessor> {
-    lookup(versioned).or_else(|_| lookup(legacy)).map_err(|_| {
-        format!(
-            "Biblioteca Steam incompatível: interface exigida {} (ou {}) ausente.",
-            versioned.to_string_lossy(),
-            legacy.to_string_lossy()
-        )
-    })
+    versioned
+        .iter()
+        .chain([&legacy])
+        .find_map(|name| lookup(name).ok())
+        .ok_or_else(|| {
+            let accepted: Vec<_> = versioned
+                .iter()
+                .map(|name| name.to_string_lossy())
+                .collect();
+            format!(
+                "DLL Steam incompatível: interface exigida {} (ou {}) ausente.",
+                accepted.join(", "),
+                legacy.to_string_lossy()
+            )
+        })
 }
 
-fn load_interface(library: &Library, versioned: &CStr, legacy: &CStr) -> Result<InterfaceAccessor> {
+fn load_interface(
+    library: &Library,
+    versioned: &[&CStr],
+    legacy: &CStr,
+) -> Result<InterfaceAccessor> {
     resolve_interface(versioned, legacy, |name| library.symbol(name))
 }
 
@@ -489,6 +513,13 @@ fn usable_library(_: &Path) -> bool {
 }
 
 pub fn candidate_dll_paths(local: &Path) -> Vec<PathBuf> {
+    dll_candidates(local, cached_library_dll_paths).collect()
+}
+
+fn dll_candidates(
+    local: &Path,
+    library_paths: impl FnOnce() -> Vec<PathBuf>,
+) -> impl Iterator<Item = PathBuf> {
     let mut paths = Vec::new();
     if let Ok(env_path) = std::env::var("MK8_STEAM_DLL") {
         let p = PathBuf::from(env_path.trim());
@@ -502,10 +533,14 @@ pub fn candidate_dll_paths(local: &Path) -> Vec<PathBuf> {
             paths.push(parent.join(STEAM_LIBRARY));
         }
     }
-    // An explicit/local library takes priority, including when Steam has no games installed.
-    if paths.iter().any(|path| usable_library(path)) {
-        return paths;
-    }
+    // Steam library discovery stays lazy: the closure runs only if the explicit/local
+    // candidates cannot initialize, so the next installed library is still tried.
+    paths
+        .into_iter()
+        .chain(std::iter::once_with(library_paths).flatten())
+}
+
+fn cached_library_dll_paths() -> Vec<PathBuf> {
     // Status polls every two seconds; do not rescan installed games on each poll.
     static CACHE: Mutex<Option<(Instant, Vec<PathBuf>)>> = Mutex::new(None);
     let mut cache = CACHE.lock().unwrap();
@@ -515,10 +550,7 @@ pub fn candidate_dll_paths(local: &Path) -> Vec<PathBuf> {
     {
         *cache = Some((Instant::now(), library_dll_paths(&steam_roots())));
     }
-    if let Some((_, found)) = cache.as_ref() {
-        paths.extend(found.iter().cloned());
-    }
-    paths
+    cache.as_ref().unwrap().1.clone()
 }
 
 fn steam_roots() -> Vec<PathBuf> {
@@ -695,9 +727,7 @@ fn library_dll_paths(roots: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 pub fn find_dll(local: &Path) -> Option<PathBuf> {
-    candidate_dll_paths(local)
-        .into_iter()
-        .find(|path| usable_library(path))
+    dll_candidates(local, cached_library_dll_paths).find(|path| usable_library(path))
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -785,23 +815,11 @@ impl Api {
             init,
             shutdown: library.symbol(c"SteamAPI_Shutdown")?,
             run_callbacks: library.symbol(c"SteamAPI_RunCallbacks")?,
-            steam_user: load_interface(&library, c"SteamAPI_SteamUser_v023", c"SteamUser")?,
-            steam_friends: load_interface(
-                &library,
-                c"SteamAPI_SteamFriends_v017",
-                c"SteamFriends",
-            )?,
-            steam_matchmaking: load_interface(
-                &library,
-                c"SteamAPI_SteamMatchmaking_v009",
-                c"SteamMatchmaking",
-            )?,
-            steam_networking: load_interface(
-                &library,
-                c"SteamAPI_SteamNetworking_v006",
-                c"SteamNetworking",
-            )?,
-            steam_utils: load_interface(&library, c"SteamAPI_SteamUtils_v010", c"SteamUtils")?,
+            steam_user: load_interface(&library, STEAM_USER, c"SteamUser")?,
+            steam_friends: load_interface(&library, STEAM_FRIENDS, c"SteamFriends")?,
+            steam_matchmaking: load_interface(&library, STEAM_MATCHMAKING, c"SteamMatchmaking")?,
+            steam_networking: load_interface(&library, STEAM_NETWORKING, c"SteamNetworking")?,
+            steam_utils: load_interface(&library, STEAM_UTILS, c"SteamUtils")?,
             get_steam_id: library.symbol(c"SteamAPI_ISteamUser_GetSteamID")?,
             get_persona_name: library.symbol(c"SteamAPI_ISteamFriends_GetPersonaName")?,
             activate_invite_dialog: library
@@ -876,45 +894,34 @@ static STEAM_API: Mutex<Option<Arc<Api>>> = Mutex::new(None);
 
 fn compatible_api<T>(
     paths: impl IntoIterator<Item = PathBuf>,
-    mut load: impl FnMut(&Path) -> Result<T>,
+    mut initialize: impl FnMut(&Path) -> Result<Option<T>>,
 ) -> Result<T> {
     let mut failures = Vec::new();
     for path in paths {
         if !path.is_file() {
             continue;
         }
-        match load(&path) {
-            Ok(api) => return Ok(api),
+        match initialize(&path) {
+            Ok(Some(api)) => return Ok(api),
+            Ok(None) => return Err("O cliente Steam não está aberto. Abra a Steam e faça login antes de criar ou entrar na sala.".into()),
             Err(error) => failures.push(format!("{}: {error}", path.display())),
         }
     }
     if failures.is_empty() {
-        return Err("steam_api64.dll não encontrada. Instalar ou abrir apenas a Steam não fornece essa biblioteca. Coloque a DLL Steamworks de 64 bits ao lado do Launcher.exe e reabra o Launcher. Não é necessário refazer a build do jogo.".into());
+        return Err(format!("{STEAM_LIBRARY} não encontrada. Use a biblioteca Steamworks de 64 bits em um jogo instalado na Steam, na pasta de dados do launcher ou no caminho MK8_STEAM_DLL."));
     }
     Err(format!(
-        "Nenhuma DLL Steam candidata é compatível ({} verificadas). {}",
+        "Não foi possível inicializar a Steam com as bibliotecas encontradas ({} verificadas). {}",
         failures.len(),
         failures.into_iter().take(4).collect::<Vec<_>>().join("\n")
     ))
 }
 
-fn ensure_api(local: &Path) -> Result<Arc<Api>> {
-    let mut guard = STEAM_API.lock().unwrap();
-    if let Some(api) = guard.as_ref() {
-        return Ok(api.clone());
-    }
-    // Ignore libraries that cannot be loaded here (32-bit or Android binaries in Steam folders).
-    let candidates: Vec<_> = candidate_dll_paths(local)
-        .into_iter()
-        .filter(|path| usable_library(path))
-        .collect();
-    if candidates.is_empty() {
-        return Err(format!("{STEAM_LIBRARY} não encontrada. Use a biblioteca Steamworks de 64 bits em um jogo instalado na Steam, na pasta de dados do launcher ou no caminho MK8_STEAM_DLL."));
-    }
-    // Resolve exports before initialization; a rejected library is released by Api::load.
-    let api = compatible_api(candidates, |path| Api::load(path, local))?;
+// Ok(None) means the Steam client itself is offline. Only retry candidate-specific failures.
+fn initialize_candidate(path: &Path, local: &Path) -> Result<Option<Api>> {
+    let api = Api::load(path, local)?;
     if !unsafe { (api.is_steam_running)() } {
-        return Err("O cliente Steam não está aberto. Abra a Steam e faça login antes de criar ou entrar na sala.".into());
+        return Ok(None);
     }
     api.init.run()?;
     for (name, accessor) in [
@@ -931,6 +938,18 @@ fn ensure_api(local: &Path) -> Result<Arc<Api>> {
             ));
         }
     }
+    Ok(Some(api))
+}
+
+fn ensure_api(local: &Path) -> Result<Arc<Api>> {
+    let mut guard = STEAM_API.lock().unwrap();
+    if let Some(api) = guard.as_ref() {
+        return Ok(api.clone());
+    }
+    let api = compatible_api(
+        dll_candidates(local, cached_library_dll_paths).filter(|path| usable_library(path)),
+        |path| initialize_candidate(path, local),
+    )?;
     let net = unsafe { (api.steam_networking)() };
     if !net.is_null() {
         unsafe { (api.allow_p2p_relay)(net, true) };
@@ -1585,33 +1604,63 @@ mod tests {
     fn incompatible_candidate_does_not_hide_a_compatible_library() {
         let root = std::env::temp_dir().join(format!("mk8-compatible-dll-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let old = root.join("old.dll");
-        let good = root.join("good.dll");
-        fs::write(&old, b"selection fixture").unwrap();
-        fs::write(&good, b"selection fixture").unwrap();
-        let paths = vec![root.join("missing.dll"), old.clone(), good.clone()];
+        let old = root.join(STEAM_LIBRARY);
+        let good = root.join("steamapps/common/Game").join(STEAM_LIBRARY);
+        fs::create_dir_all(good.parent().unwrap()).unwrap();
+        let fixture = if cfg!(target_os = "linux") {
+            // usable_library checks the ELF header before a library is considered usable.
+            let mut elf = [0u8; 24];
+            elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+            elf[16..20].copy_from_slice(&[3, 0, 62, 0]);
+            elf.to_vec()
+        } else {
+            b"selection fixture".to_vec()
+        };
+        fs::write(&old, &fixture).unwrap();
+        fs::write(&good, &fixture).unwrap();
+        let paths = dll_candidates(&root, || library_dll_paths(std::slice::from_ref(&root)));
         let mut visited = Vec::new();
         let chosen = compatible_api(paths, |path| {
-            visited.push(path.to_owned());
-            if path == old {
-                Err("required export absent".into())
+            if path == old || path == good {
+                visited.push(path.to_owned());
+            }
+            if path == good {
+                Ok(Some(path.to_owned()))
             } else {
-                Ok(path.to_owned())
+                Err("required export absent".into())
             }
         })
         .unwrap();
         assert_eq!(chosen, good);
         assert_eq!(visited, [old.clone(), good.clone()]);
+        let paths = dll_candidates(&root, || {
+            panic!("compatible local DLL should skip the scan")
+        });
+        assert_eq!(
+            compatible_api(paths, |path| {
+                if path == old {
+                    Ok(Some(path.to_owned()))
+                } else {
+                    Err("unrelated DLL".into())
+                }
+            })
+            .unwrap(),
+            old
+        );
         let error = compatible_api::<()>([old.clone()], |_| Err("required export absent".into()))
             .unwrap_err();
-        assert!(error.contains("old.dll") && error.contains("required export absent"));
+        assert!(error.contains(STEAM_LIBRARY) && error.contains("required export absent"));
         assert!(
             compatible_api::<()>([root.join("missing.dll")], |_| panic!("missing DLL loaded"))
                 .is_err()
         );
-        fs::remove_file(old).unwrap();
-        fs::remove_file(good).unwrap();
-        fs::remove_dir(root).unwrap();
+        let offline = compatible_api::<()>([old.clone(), good.clone()], |path| {
+            assert_eq!(path, old);
+            Ok(None)
+        })
+        .unwrap_err();
+        assert!(offline.contains("cliente Steam não está aberto"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1733,7 +1782,7 @@ mod tests {
             std::ptr::null_mut()
         }
         let mut looked_up = Vec::new();
-        let accessor = resolve_interface(c"SteamAPI_SteamUser_v023", c"SteamUser", |name| {
+        let accessor = resolve_interface(STEAM_USER, c"SteamUser", |name| {
             looked_up.push(name.to_owned());
             Ok(if name == c"SteamAPI_SteamUser_v023" {
                 current
@@ -1744,7 +1793,33 @@ mod tests {
         .unwrap();
         assert!(!unsafe { accessor() }.is_null());
         assert_eq!(looked_up, [c"SteamAPI_SteamUser_v023".to_owned()]);
-        let accessor = resolve_interface(c"SteamAPI_SteamUser_v023", c"SteamUser", |name| {
+        // An older verified version (SDK 1.52-1.56) is used before the legacy export.
+        let mut looked_up = Vec::new();
+        let accessor = resolve_interface(STEAM_USER, c"SteamUser", |name| {
+            looked_up.push(name.to_owned());
+            if name == c"SteamAPI_SteamUser_v021" {
+                Ok(current)
+            } else {
+                Err("absent".into())
+            }
+        })
+        .unwrap();
+        assert!(!unsafe { accessor() }.is_null());
+        assert_eq!(
+            looked_up.last().unwrap().as_c_str(),
+            c"SteamAPI_SteamUser_v021"
+        );
+        // SDK 1.62+ DLLs (Counter-Strike 2) export SteamFriends v018 only.
+        let accessor = resolve_interface(STEAM_FRIENDS, c"SteamFriends", |name| {
+            if name == c"SteamAPI_SteamFriends_v018" {
+                Ok(current)
+            } else {
+                Err("absent".into())
+            }
+        })
+        .unwrap();
+        assert!(!unsafe { accessor() }.is_null());
+        let accessor = resolve_interface(STEAM_USER, c"SteamUser", |name| {
             if name == c"SteamUser" {
                 Ok(legacy)
             } else {
@@ -1753,10 +1828,18 @@ mod tests {
         })
         .unwrap();
         assert!(unsafe { accessor() }.is_null());
-        let error = resolve_interface(c"SteamAPI_SteamUser_v023", c"SteamUser", |_| {
-            Err("absent".into())
+        // Unverified versions stay rejected instead of being guessed.
+        let error = resolve_interface(STEAM_FRIENDS, c"SteamFriends", |name| {
+            if name == c"SteamAPI_SteamFriends_v019" {
+                Ok(current)
+            } else {
+                Err("absent".into())
+            }
         })
         .unwrap_err();
+        assert!(error.contains("SteamAPI_SteamFriends_v018") && error.contains("SteamFriends"));
+        let error =
+            resolve_interface(STEAM_USER, c"SteamUser", |_| Err("absent".into())).unwrap_err();
         assert!(error.contains("SteamAPI_SteamUser_v023") && error.contains("SteamUser"));
     }
 

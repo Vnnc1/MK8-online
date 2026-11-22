@@ -33,9 +33,12 @@ jobs:
           python -m pip --isolated install --only-binary=:all: --require-hashes
           -r upstream/smm2recomp/recomp/tools/requirements-gen.txt -r toolchain/requirements-host.txt
       - name: Pipeline, graphics patches and package tests
+        env:
+          PYTHONPATH: tests
         run: >-
-          python -m unittest tests.test_pipeline tests.test_fsr tests.test_fsr_fg
-          tests.test_launcher_payload tests.test_package_payload tests.test_package_guard
+          python -m unittest -v test_pipeline test_import_mk8 test_dlc test_package_payload
+          test_runtime_windows_paths test_vulkan_loader_shim
+          tests.test_fsr tests.test_fsr_fg tests.test_launcher_payload tests.test_package_guard
           tests.test_guest_source tests.test_prebuilt_host
       - uses: actions/download-artifact@v4
         with:

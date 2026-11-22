@@ -27,14 +27,17 @@ def _replace(text, old, new, what):
 def prepare_exec(runtime):
     exec_c = runtime / 'nvn/vulkan/exec.c'
     text = exec_c.read_text(encoding='utf-8')
-    text = _replace(text,
-                    'if (getenv("MK8_FSR4_CAPTURE") && g_pass_depth',
-                    'if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth',
-                    'Depth capture condition')
-    text = _replace(text,
-                    'if (getenv("MK8_FSR4") || getenv("MK8_DLSS")) {',
-                    'if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG")) {',
-                    'Main-draw matrix scan condition')
+    # toolchain/fsr.py already adds MK8_FSR_FG to both conditions; only an exec.c prepared
+    # without that newer hook needs the standalone extension here.
+    if 'getenv("MK8_FSR_FG")' not in text:
+        text = _replace(text,
+                        'if (getenv("MK8_FSR4_CAPTURE") && g_pass_depth',
+                        'if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth',
+                        'Depth capture condition')
+        text = _replace(text,
+                        'if (getenv("MK8_FSR4") || getenv("MK8_DLSS")) {',
+                        'if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG")) {',
+                        'Main-draw matrix scan condition')
     exec_c.write_text(text, encoding='utf-8')
 
 
@@ -97,15 +100,16 @@ def prepare_device(runtime):
 
     # The generated frame-interpolation blobs and the MLFI captured modules declare storage images
     # with format Unknown and (for MLFI) storage features that need device extensions.
-    text = _replace(text,
-                    '    VkExtensionProperties *ep = calloc(ne, sizeof *ep);\n'
-                    '    vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);\n'
-                    '    const char *ext[8];',
-                    '    VkExtensionProperties *ep = calloc(ne, sizeof *ep);\n'
-                    '    vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);\n'
-                    '    // room for the swapchain/WSI extensions plus the fsr4 MLFI set\n'
-                    '    const char *ext[16];',
-                    'Device extension array')
+    if 'const char *ext[16];' not in text:
+        text = _replace(text,
+                        '    VkExtensionProperties *ep = calloc(ne, sizeof *ep);\n'
+                        '    vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);\n'
+                        '    const char *ext[8];',
+                        '    VkExtensionProperties *ep = calloc(ne, sizeof *ep);\n'
+                        '    vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);\n'
+                        '    // room for the swapchain/WSI extensions plus the fsr4 MLFI set\n'
+                        '    const char *ext[16];',
+                        'Device extension array')
 
     # Query and enable the matching feature structs. These are only chained into the device when the
     # extensions above were enabled; the provider refuses creation with its own log line if a

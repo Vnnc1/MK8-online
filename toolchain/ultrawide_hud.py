@@ -29,5 +29,5 @@ def patch_unit(src, output):
     text = patch(raw.decode('utf-8').replace('\r\n', '\n'))
     target = output/'ultrawide_hud'/src.name
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding='utf-8')
+    target.write_text(text, encoding='utf-8', newline='\r\n')
     return target

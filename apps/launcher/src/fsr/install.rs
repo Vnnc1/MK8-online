@@ -2292,7 +2292,16 @@ mod tests {
         assert!(read_installed(&dir).is_none());
         drop(lock);
 
-        let retry_lock = cache_lock(&dir).unwrap();
+        // A concurrent test that spawns the launcher can hold an inherited copy of the lock fd
+        // for the few milliseconds between fork and exec, so a released lock may briefly refuse.
+        let retry_lock = (0..100)
+            .find_map(|_| {
+                cache_lock(&dir).ok().or_else(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    None
+                })
+            })
+            .expect("the cache lock is released");
         fs::write(dir.join("job-id"), "retry").unwrap();
         set_progress(&dir, "build", 70, "building").unwrap();
         record_interrupted_job(&dir, "failed-attempt", "stale");

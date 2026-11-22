@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ANCHOR = ("    extern void vk_frame_suspend(void);\n"
           "    extern void vk_frame_resume(void);\n"
           "    vk_frame_suspend();\n")
-CALL = ANCHOR + """    { extern VkImageView mk8_fsr4_upscale(VkCommandBuffer, TexBackend *, TexBackend *, uint32_t, uint32_t,
+CALL = ANCHOR + """    if (mk8_temporal_requested()) { extern VkImageView mk8_fsr4_upscale(VkCommandBuffer, TexBackend *, TexBackend *, uint32_t, uint32_t,
                                          uint32_t, uint32_t, float);
       TexBackend *fsr_depth = g_fsr_captured;
       if (fsr_depth && (fsr_depth->width != b->width || fsr_depth->height != b->height)) {
@@ -23,10 +23,12 @@ CALL = ANCHOR + """    { extern VkImageView mk8_fsr4_upscale(VkCommandBuffer, Te
           fsr_depth = copy;
       }
       VkImageView fsr4 = mk8_fsr4_upscale(cb, b, fsr_depth, b->width, b->height, ow, oh, 16.7f);
+      if (fsr4) mk8_graphics_result(getenv("MK8_DLSS") ? "dlss" : getenv("MK8_FSR_VERSION"), b->width, b->height, ow, oh);
       if (fsr4) { vk_full_barrier(cb); vk_frame_resume(); return fsr4; } }
 """
 
-CAPTURE = """    if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth && g_pass_depth->backend) {
+CAPTURE = """    if ((mk8_temporal_requested() || getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth &&
+        g_pass_depth->backend) {
         TexBackend *db = (TexBackend *)g_pass_depth->backend;
         if (db->image && db->width >= 640 && db->height >= 360 && db->width * 9 == db->height * 16) {
             // Frame generation consumes the depth at the presented size: its FFX context is created
@@ -53,7 +55,7 @@ CAPTURE = """    if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_p
     }
 """
 
-MATRIX_SCAN = """    if (getenv("MK8_FSR4") || getenv("MK8_DLSS")) {
+MATRIX_SCAN = """    if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG") || getenv("MK8_DLSS_FG")) {
         for (int c = 3; c < 21; c++) {
             Range ub = st.ubuf[0][c - 3];
             if (!((pr->vi->cbuf_mask >> c) & 1) || !ub.addr || ub.size < 44 * 4) continue;
@@ -91,7 +93,7 @@ def prepare_exec(runtime):
     text = exec_c.read_text(encoding='utf-8')
     if text.count(ANCHOR) != 1:
         raise ValueError('Present post-process boundary changed upstream')
-    start = text.find('    { extern VkImageView mk8_fsr4_upscale')
+    start = text.find('    if (mk8_temporal_requested()) { extern VkImageView mk8_fsr4_upscale')
     if start >= 0:
         marker = 'if (fsr4) { vk_full_barrier(cb); vk_frame_resume(); return fsr4; } }'
         end = text.find(marker, start)
@@ -103,6 +105,30 @@ def prepare_exec(runtime):
         text = text[:start] + text[end + 1:]
     if 'mk8_fsr4_upscale' not in text:
         text = text.replace(ANCHOR, CALL, 1)
+    include = '#include "vk.h"'
+    if text.count(include) != 1:
+        raise ValueError('Vulkan header changed upstream')
+    if 'static bool mk8_temporal_requested(void)' not in text:
+        text = text.replace(include, include + '''
+#include "../../settings.h"
+static void mk8_graphics_result(const char *method, unsigned iw, unsigned ih, unsigned ow, unsigned oh) {
+    if (!method) method = "fsr";\n    static const char *last;
+    static unsigned w, h, x, y, frames;
+    if (last == NULL || strcmp(method, last) || iw != w || ih != h || ow != x || oh != y || ++frames >= 300) {
+        LOG("[graphics] %s %ux%u -> %ux%u\\n", method, iw, ih, ow, oh);
+        last = method; w = iw; h = ih; x = ow; y = oh; frames = 0;
+    }
+}
+static bool mk8_temporal_requested(void) {
+    static int requested = -1;
+    if (requested < 0) {
+        const char *version = getenv("MK8_FSR_VERSION");
+        requested = getenv("MK8_DLSS") ? UPSCALE_DLSS : !getenv("MK8_FSR4") ? 0 :
+                    version && !strcmp(version, "4.1.2") ? UPSCALE_FSR4 : UPSCALE_FSR3;
+    }
+    return requested && requested == g_settings.upscaler;
+}
+''', 1)
     old = 'static NvnTexture *g_pass_depth;'
     if text.count(old) != 1:
         raise ValueError('Pass depth declaration changed upstream')
@@ -110,7 +136,7 @@ def prepare_exec(runtime):
         text = text.replace(old, old + '\nNvnTexture *g_fsr_depth;\nTexBackend *g_fsr_captured;'
                             '\nfloat g_fsr_view[12], g_fsr_proj[16];'
                             '\nint g_fsr_vp_valid;', 1)
-    if 'NvnTexture *mk8_fsr_last_depth(void)' not in text:
+    if 'mk8_fsr_last_depth' not in text:
         text = text.replace('TexBackend *g_fsr_captured;',
                             'TexBackend *g_fsr_captured;\nNvnTexture *mk8_fsr_last_depth(void) { return g_fsr_depth; }', 1)
     old = '    g_pass_depth = st.rt.depth;'
@@ -132,8 +158,7 @@ def prepare_exec(runtime):
     new = ('            VkDescriptorPoolSize sizes[6] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 32768}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096},\n'
            '                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768},\n'
            '                                            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_SAMPLER, 1024}};\n'
-           '            bool fsr_mv_pool = getenv("MK8_FSR4") || getenv("MK8_FSR_FG") ||\n'
-           '                               getenv("MK8_DLSS") || getenv("MK8_DLSS_FG");\n'
+           '            bool fsr_mv_pool = mk8_temporal_requested() || getenv("MK8_FSR_FG") || getenv("MK8_DLSS_FG");\n'
            '            if (fsr_mv_pool) sizes[5] = (VkDescriptorPoolSize){VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1024};\n'
            '            VkDescriptorPoolCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 8192,\n'
            '                                             .poolSizeCount = fsr_mv_pool ? 6 : 5, .pPoolSizes = sizes};')
@@ -160,7 +185,10 @@ def prepare_exec(runtime):
         line = text.rfind('\n', 0, text.find(draw_anchor)) + 1
         text = text[:line] + MATRIX_SCAN + text[line:]
     old = '    if (!smaa && !fsr) return v;'
-    new = '    if (!smaa && !fsr && !getenv("MK8_FSR4") && !getenv("MK8_DLSS")) return v;'
+    new = ('    if (!smaa && !fsr && !getenv("MK8_FSR4") && !getenv("MK8_DLSS")) {\n'
+           '        mk8_graphics_result("native", b->width, b->height, ow, oh);\n'
+           '        return v;\n'
+           '    }')
     if new not in text:
         if text.count(old) != 1:
             raise ValueError('Present feature gate changed upstream')
@@ -189,9 +217,10 @@ def prepare_device(runtime):
            '    free(ep);')
     new = ('    bool rob2 = robust && has_ext(ep, ne, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);\n'
            '    if (rob2) ext[n_ext++] = VK_EXT_ROBUSTNESS_2_EXTENSION_NAME;\n'
-           '    bool coopmat = has_ext(ep, ne, VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);\n'
+           '    bool ml = getenv("MK8_FSR_VERSION") && !strcmp(getenv("MK8_FSR_VERSION"), "4.1.2");\n'
+           '    bool coopmat = ml && has_ext(ep, ne, VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);\n'
            '    if (coopmat) ext[n_ext++] = VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME;\n'
-           '    bool float8 = has_ext(ep, ne, VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);\n'
+           '    bool float8 = ml && has_ext(ep, ne, VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);\n'
            '    if (float8) ext[n_ext++] = VK_EXT_SHADER_FLOAT8_EXTENSION_NAME;\n'
            '    free(ep);')
     if text.count(old) != 1:
@@ -216,17 +245,86 @@ def prepare_device(runtime):
            '                                                  .shaderFloat8CooperativeMatrix = float8 && have_f8.shaderFloat8CooperativeMatrix,\n'
            '                                                  .pNext = f13.pNext};\n'
            '    VkPhysicalDeviceCooperativeMatrixFeaturesKHR cm = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,\n'
-           '                                                       .cooperativeMatrix = coopmat && have_cm.cooperativeMatrix, .pNext = &f8};\n'
-           '    f13.pNext = &cm;\n'
+           '                                                       .cooperativeMatrix = coopmat && have_cm.cooperativeMatrix, .pNext = float8 ? (void *)&f8 : f13.pNext};\n'
+           '    if (coopmat) f13.pNext = &cm; else if (float8) f13.pNext = &f8;\n'
            '    LOG("[vk] FSR features: cooperative matrix %d, shader float8 %d\\n", (int)coopmat, (int)float8);\n'
            '    VkPhysicalDeviceVulkan12Features f12')
     if text.count(old) != 1:
         raise ValueError('Device creation boundary changed upstream')
     text = text.replace(old, new, 1)
+    text = text.replace('const char *ext[8];',
+                        '// room for the swapchain/WSI extensions plus the fsr4 MLFI set\n'
+                        '    const char *ext[16];')
     device.write_text(text, encoding='utf-8')
+
+
+def prepare_settings(runtime):
+    def replace(file, old, new):
+        path = runtime / file
+        source = path.read_text(encoding='utf-8')
+        if new in source:
+            return
+        if source.count(old) != 1:
+            raise ValueError(f'Graphics setting boundary changed in {file}')
+        path.write_text(source.replace(old, new), encoding='utf-8')
+
+    (runtime / 'mk8_upscaler_choices.h').write_bytes(
+        (ROOT / 'runtime/mk8/graphics/upscaler_choices.h').read_bytes())
+    menu = runtime / 'ui/menu.mm'
+    source = menu.read_text(encoding='utf-8')
+    if '#include "../mk8_upscaler_choices.h"' not in source:
+        start = source.index("    {   // each OS's own upscaler")
+        end = source.index('    static const char *aa[]', start)
+        source = 'extern "C" {\n#include "../mk8_upscaler_choices.h"\n}\n' + source[:start] + '''    {
+        const Mk8Upscalers choices = mk8_upscaler_choices(g_settings.upscaler);
+        int selected = choices.selected;
+        const char *help = "Used below display resolution. Install optional providers in the launcher: "
+                           "AMD FSR 3, FSR 4 (RDNA 4) or NVIDIA DLSS (RTX). "
+                           "Reopen the game from the launcher to load a different provider.";
+        if (opt_choice("Upscaler", &selected, choices.names, choices.count, 1, help))
+            g_settings.upscaler = choices.values[selected];
+    }
+''' + source[end:]
+        menu.write_text(source, encoding='utf-8')
+    replace('settings.h', '/* Windows: AMD FSR 1 */ };',
+            '/* Windows: AMD FSR 1 */, UPSCALE_FSR3, UPSCALE_FSR4, UPSCALE_DLSS };')
+    replace('settings.c', '? UPSCALE_BILINEAR : UPSCALE_SHARP;',
+            '? UPSCALE_BILINEAR : !strcmp(val, "fsr3") ? UPSCALE_FSR3 : !strcmp(val, "fsr4") ? UPSCALE_FSR4 : !strcmp(val, "dlss") ? UPSCALE_DLSS : UPSCALE_SHARP;')
+    replace('settings.c', 'g_settings.upscaler == UPSCALE_METALFX ? "metalfx"',
+            'g_settings.upscaler == UPSCALE_FSR3 ? "fsr3" : g_settings.upscaler == UPSCALE_FSR4 ? "fsr4" : g_settings.upscaler == UPSCALE_DLSS ? "dlss" : g_settings.upscaler == UPSCALE_METALFX ? "metalfx"')
+    # Once an actual display buffer has been identified, let the existing renderer rescale it on
+    # its next use. The guest can present a plain RGBA texture without the render-target flag.
+    replace('nvn/vulkan/device.c', '    b->presented = true;', """    b->presented = true;
+    if (!b->scalable && (getenv("MK8_FSR4") || getenv("MK8_DLSS")) && !getenv("LARECOMP_NO_SCALE") &&
+        t->target == 1 && t->samples <= 1 && t->levels == 1 && t->width == 1920 && t->height == 1080)
+        b->scalable = true;""")
+    replace('nvn/vulkan/exec.c', 'g_settings.upscaler == UPSCALE_FSR1 &&', 'g_settings.upscaler >= UPSCALE_FSR1 &&')
+    replace('nvn/vulkan/exec.c', '    if (smaa) {  // SMAA 1x:', '    mk8_graphics_result(fsr ? "fsr1" : "native", b->width, b->height, ow, oh);\n    if (smaa) {  // SMAA 1x:')
+    # Count based on the same wall-clock window. ImGui is also drawn on interpolated frames.
+    replace('ui/menu.mm', 'static double t0, out_ratio;', 'static double t0, game_fps, present_fps;')
+    replace('ui/menu.mm', 'out_ratio = dr ? 1.0 + (double)dg / dr : 1.0;',
+            'if (t0 && now > t0) { game_fps = dr / (now - t0); present_fps = (dr + dg) / (now - t0); }')
+    replace('ui/menu.mm', 'if (out_ratio > 1.05) ImGui::Text("%.0f fps (%.0f with frame generation)", io.Framerate, io.Framerate * out_ratio);\n            else ImGui::Text("%.0f fps", io.Framerate);',
+            'if (game_fps > 0) ImGui::Text("Game %.0f FPS | Output %.0f FPS | %.1f ms", game_fps, present_fps, 1000.0 / game_fps);')
+    # Count real and repeated window submissions separately. A held frame can refresh
+    # the display without the game rendering a new frame.
+    replace('nvn/framegen.h', 'extern uint64_t g_fg_real, g_fg_generated;', 'extern uint64_t g_fg_real, g_fg_generated, g_mk8_game_frames, g_mk8_output_frames;')
+    replace('nvn/framegen.c', 'uint64_t g_fg_real, g_fg_generated;', 'uint64_t g_fg_real, g_fg_generated, g_mk8_game_frames, g_mk8_output_frames;')
+    replace('ui/menu.mm', 'uint64_t dr = g_fg_real - real0, dg = g_fg_generated - gen0;', 'uint64_t dr = g_mk8_game_frames - real0, output = g_mk8_output_frames - gen0;')
+    replace('ui/menu.mm', 'present_fps = (dr + dg) / (now - t0);', 'present_fps = output / (now - t0);')
+    replace('ui/menu.mm', 'real0 = g_fg_real, gen0 = g_fg_generated, t0 = now;', 'real0 = g_mk8_game_frames, gen0 = g_mk8_output_frames, t0 = now;')
+    replace('nvn/vulkan/device.c', 'else vk_frame_end(shot || req ? shot_path : NULL);',
+            'else vk_frame_end(shot || req ? shot_path : NULL);\n        g_mk8_output_frames++;\n        if (!g_held) g_mk8_game_frames++;')
+    # Increment after the intermediate frame is submitted.
+    replace('nvn/framegen.c', '    if (gen) g_fg_generated++;', '    // The Vulkan presenter counts the generated image after submission.')
+    replace('nvn/vulkan/device.c', 'vk_frame_end(fg_base[0] ? gen_path : NULL);', 'vk_frame_end(fg_base[0] ? gen_path : NULL);\n                g_fg_generated++; g_mk8_output_frames++;')
 
 
 def prepare(runtime):
     prepare_exec(runtime)
+    # Focused unit fixtures only build nvn/vulkan; the settings integration needs the full
+    # runtime tree (menu.mm, settings.c/h) that every real preparation has.
+    if (runtime / 'ui/menu.mm').is_file():
+        prepare_settings(runtime)
     prepare_shaders(runtime)
     prepare_device(runtime)

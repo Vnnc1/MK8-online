@@ -77,7 +77,7 @@ impl Drop for ThreadNameHandler {
 }
 
 /// A Vulkan physical device, reduced to what the FSR page needs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GpuInfo {
     pub api_version: u32,
     pub vendor_id: u32,
@@ -149,11 +149,26 @@ struct VkPhysicalDevicePropertiesRaw {
     bytes: [u8; 1024],
 }
 
-fn probe_gpu() -> Result<GpuInfo> {
+pub(crate) fn probe_gpu() -> Result<GpuInfo> {
     use std::ffi::c_void;
     unsafe {
-        let loader = libloading::Library::new(VULKAN_LOADER)
-            .map_err(|error| format!("Vulkan indisponível: {error}"))?;
+        // On Windows, keep the system loader out of the search path: only System32 may
+        // provide vulkan-1.dll for this probe.
+        let loader = {
+            #[cfg(windows)]
+            {
+                libloading::os::windows::Library::load_with_flags(
+                    VULKAN_LOADER,
+                    windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_SYSTEM32,
+                )
+                .map(libloading::Library::from)
+            }
+            #[cfg(not(windows))]
+            {
+                libloading::Library::new(VULKAN_LOADER)
+            }
+        }
+        .map_err(|error| format!("Vulkan indisponível: {error}"))?;
         let create: libloading::Symbol<
             unsafe extern "system" fn(
                 *const VkInstanceCreateInfo,
@@ -215,7 +230,10 @@ fn probe_gpu() -> Result<GpuInfo> {
             return Err(format!("vkEnumeratePhysicalDevices retornou {rc}."));
         }
         let mut best: Option<(GpuInfo, u8)> = None;
-        for device in devices.into_iter().take(count as usize) {
+        let want = std::env::var("LARECOMP_GPU")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok());
+        for (index, device) in devices.into_iter().take(count as usize).enumerate() {
             let mut raw = VkPhysicalDevicePropertiesRaw { bytes: [0; 1024] };
             properties(device, &mut raw);
             let read = |offset: usize| {
@@ -236,10 +254,17 @@ fn probe_gpu() -> Result<GpuInfo> {
                 device_type: read(16),
                 device_name: String::from_utf8_lossy(&raw.bytes[20..20 + name_end]).into_owned(),
             };
-            let rank = match info.device_type {
-                2 => 3, // discrete
-                1 => 2, // integrated
-                _ => 1,
+            if info.api_version < (1 << 22 | 3 << 12) {
+                continue;
+            }
+            let rank = if Some(index) == want {
+                100
+            } else {
+                match info.device_type {
+                    2 => 3, // discrete
+                    1 => 2, // integrated
+                    _ => 1,
+                }
             };
             if best.as_ref().is_none_or(|(_, current)| rank > *current) {
                 best = Some((info, rank));

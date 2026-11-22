@@ -135,10 +135,17 @@ fn handle(setup: &mut Setup, method: &Method, path: &str, body: &str) -> Result<
         ("POST", "/api/space") => {
             let path = PathBuf::from(body["path"].as_str().unwrap_or(""));
             let absolute = path.is_absolute();
-            Ok(json!({
+            let mut space = json!({
                 "free_gib": absolute.then(|| free_gib(&path)).flatten(),
                 "hard_disk": absolute.then(|| hard_disk(&path)).flatten(),
-            }))
+            });
+            #[cfg(windows)]
+            {
+                let volume = absolute.then(|| installer::file_system(&path)).flatten();
+                space["file_system"] = json!(volume.as_ref().map(|(name, _)| name));
+                space["hard_links"] = json!(volume.map(|(_, links)| links));
+            }
+            Ok(space)
         }
         ("POST", "/api/install") => {
             if setup.started && setup.progress.lock().unwrap().state == "running" {
@@ -167,6 +174,8 @@ fn handle(setup: &mut Setup, method: &Method, path: &str, body: &str) -> Result<
             if !crate::language::valid(language) {
                 return Err("Unsupported language / Idioma não suportado".into());
             }
+            #[cfg(windows)]
+            installer::require_hard_links(&options.data)?;
             #[cfg(windows)]
             crate::managed::create_data(&options.data).map_err(|e| e.to_string())?;
             crate::language::write(

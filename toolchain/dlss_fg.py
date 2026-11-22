@@ -33,16 +33,35 @@ def prepare_exec(runtime):
     exec_c = runtime / 'nvn/vulkan/exec.c'
     text = exec_c.read_text(encoding='utf-8')
     gate = _mk8_dlss_fg_enabled()
-    text = _replace(
-        text,
-        'if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth',
-        f'if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG") || {gate}) && g_pass_depth',
-        'DLSS-G depth capture condition')
-    text = _replace(
-        text,
-        'if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG")) {',
-        f'if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG") || {gate}) {{',
-        'DLSS-G main-draw matrix scan condition')
+    union_capture = ('if ((mk8_temporal_requested() || getenv("MK8_FSR4_CAPTURE") || '
+                     'getenv("MK8_FSR_FG")) && g_pass_depth')
+    if union_capture in text:
+        text = _replace(
+            text,
+            union_capture,
+            'if ((mk8_temporal_requested() || getenv("MK8_FSR4_CAPTURE") || '
+            f'getenv("MK8_FSR_FG") || {gate}) && g_pass_depth',
+            'DLSS-G depth capture condition')
+    else:
+        text = _replace(
+            text,
+            'if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth',
+            f'if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG") || {gate}) && g_pass_depth',
+            'DLSS-G depth capture condition')
+    union_scan = ('if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG") || '
+                  'getenv("MK8_DLSS_FG")) {')
+    if union_scan in text:
+        text = text.replace(
+            union_scan,
+            'if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG") || '
+            f'{gate}) {{',
+            1)
+    else:
+        text = _replace(
+            text,
+            'if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG")) {',
+            f'if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG") || {gate}) {{',
+            'DLSS-G main-draw matrix scan condition')
     text = _replace(
         text,
         '    VkSemaphoreSubmitInfo sig[2] =',

@@ -39,7 +39,20 @@
 
 #ifdef _WIN32
 typedef HMODULE Mk8Lib;
-static Mk8Lib lib_open(const char *path) { return LoadLibraryA(path); }
+static Mk8Lib lib_open(const char *path) {
+    // Match the FSR loader: wide path for non-ASCII data folders and a restricted search
+    // order so dependent DLLs come from the plugin directory or System32 only.
+    int length = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (length <= 1) return NULL;
+    wchar_t *wide = (wchar_t *)malloc((size_t)length * sizeof *wide);
+    if (!wide) return NULL;
+    HMODULE library = NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, length) == length)
+        library = LoadLibraryExW(wide, NULL,
+                                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    free(wide);
+    return library;
+}
 static void *lib_symbol(Mk8Lib library, const char *name) { return (void *)GetProcAddress(library, name); }
 static void lib_close(Mk8Lib library) { if (library) FreeLibrary(library); }
 static void lib_error_text(char *out, size_t n) {

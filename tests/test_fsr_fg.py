@@ -95,8 +95,8 @@ class FsrFgPatchTests(unittest.TestCase):
     def test_enables_the_depth_capture_and_camera_scan_for_frame_generation(self):
         runtime = self.patched()
         exec_c = (runtime / 'nvn/vulkan/exec.c').read_text(encoding='utf-8')
-        self.assertIn('if ((getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth', exec_c)
-        self.assertIn('if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG")) {', exec_c)
+        self.assertIn('if ((mk8_temporal_requested() || getenv("MK8_FSR4_CAPTURE") || getenv("MK8_FSR_FG")) && g_pass_depth', exec_c)
+        self.assertIn('if (getenv("MK8_FSR4") || getenv("MK8_DLSS") || getenv("MK8_FSR_FG") || getenv("MK8_DLSS_FG")) {', exec_c)
         # The FG bridge prepares at the swapchain extent, while the game's depth pass is at its own
         # render size; the capture is resampled to the presented size only for FG.
         self.assertIn('if (getenv("MK8_FSR_FG") && g_vk.sc_extent.width && g_vk.sc_extent.height &&\n'
@@ -108,7 +108,7 @@ class FsrFgPatchTests(unittest.TestCase):
         self.assertIn('gl_FragCoord.xy / pc.a.xy', shaders)
         self.assertIn('resampled to the presented size', exec_c)
         # The motion-vector compute's storage-image descriptor needs a matching pool size.
-        self.assertIn('getenv("MK8_DLSS") || getenv("MK8_DLSS_FG");', exec_c)
+        self.assertIn('getenv("MK8_FSR_FG") || getenv("MK8_DLSS_FG");', exec_c)
         self.assertIn('sizes[5] = (VkDescriptorPoolSize){VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1024};', exec_c)
 
     def test_enables_the_mlfi_device_features_only_for_fsr4(self):

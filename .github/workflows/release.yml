@@ -84,27 +84,30 @@ jobs:
         shell: bash
         run: |
           printf 'title=%s\n' "$(tr -d '\r\n' < dist/release-title.txt)" >> "$GITHUB_OUTPUT"
-          cat >> dist/release-notes.md <<'NOTES'
-
-          ### Linux x86-64
-
-          Download the AppImage or extract the tarball and run `MK8-online/AppRun`.
-          Both packages prepare the game locally. Each download has a matching SHA-256 file.
-          NOTES
-      - uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ steps.release.outputs.title }}
-          prerelease: ${{ contains(github.ref_name, '-') || github.ref_name == 'v0.3.0' }}
-          body_path: dist/release-notes.md
-          fail_on_unmatched_files: true
-          files: |
-            dist/*-setup.exe
-            dist/*-setup.exe.sha256
-            dist/*-portable.zip
-            dist/*-portable.zip.sha256
-            dist/ffmpeg-9.0.2.tar.xz
-            dist/build-ffmpeg.sh
-            dist/*-linux-x86_64.AppImage
-            dist/*-linux-x86_64.AppImage.sha256
-            dist/*-linux-x86_64.tar.gz
-            dist/*-linux-x86_64.tar.gz.sha256
+          cd dist
+          for file in *-setup.exe *-portable.zip *-linux-x86_64.AppImage *-linux-x86_64.tar.gz; do
+            test -s "$file"
+            sha256sum --check "$file.sha256"
+          done
+      - name: Publish complete download set
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TITLE: ${{ steps.release.outputs.title }}
+        run: |
+          cd dist
+          assets=(*-setup.exe *-portable.zip *-linux-x86_64.AppImage *-linux-x86_64.tar.gz
+                  *.sha256 ffmpeg-9.0.2.tar.xz build-ffmpeg.sh)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Manually tested packages may already be public. Verify the published files in place.
+            for asset in "${assets[@]}"; do
+              gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p "$asset" -D published
+            done
+            cd published
+            sha256sum --check ./*.sha256
+          else
+            flags=()
+            if [[ $GITHUB_REF_NAME == *-* || $GITHUB_REF_NAME == v0.3.0 ]]; then flags+=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" --verify-tag --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TITLE" --notes-file release-notes.md "${flags[@]}" "${assets[@]}"
+          fi

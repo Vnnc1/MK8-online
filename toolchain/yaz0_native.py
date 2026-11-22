@@ -41,5 +41,5 @@ def patch_unit(src, output):
                          'Native Yaz0 loop requires the verified MK8 4.0.1 generated unit')
     target = output/'yaz0'/src.name
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(patch(raw.decode('utf-8').replace('\r\n', '\n')), encoding='utf-8')  # (generated with CRLF)
+    target.write_text(patch(raw.decode('utf-8').replace('\r\n', '\n')), encoding='utf-8', newline='\r\n')
     return target

@@ -27,6 +27,7 @@ class LauncherPayloadTests(unittest.TestCase):
             add(str(manifest.relative_to(root)), b'{"files": {}}')
             sources = {
                 "runtime/mk8/graphics/fsr.cpp", "runtime/mk8/graphics/ffx/LICENSE",
+                "runtime/mk8/windows.manifest", "runtime/mk8/windows.rc",
                 "tools/fsr4-linux/src/provider/ffx_provider.cpp", "tools/fg-linux/CMakeLists.txt",
             }
             for name in (*sources, "LICENSE", "toolchain/mii_assembly.html"):

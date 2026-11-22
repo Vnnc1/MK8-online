@@ -103,7 +103,19 @@ extern TexBackend *g_fsr_captured;  // exec.c: the scene-depth copy at the pass 
 
 static void *load_library(const char *path) {
 #ifdef _WIN32
-    return (void *)LoadLibraryA(path);
+    // Widen the launcher-provided path and restrict dependent DLLs to the provider's own
+    // directory and System32, so a data folder with non-ASCII characters still loads and the
+    // process working directory cannot substitute a DLL.
+    int length = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (length <= 1) return NULL;
+    wchar_t *wide = (wchar_t *)malloc((size_t)length * sizeof *wide);
+    if (!wide) return NULL;
+    void *library = NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, length) == length)
+        library = (void *)LoadLibraryExW(wide, NULL,
+                                         LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    free(wide);
+    return library;
 #else
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 #endif

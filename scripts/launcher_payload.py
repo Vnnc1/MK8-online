@@ -28,6 +28,7 @@ def payload_files(windows, importer, host, host_manifest, ffmpeg):
     yield ROOT / "LICENSE", "LICENSE"
     yield MANIFEST, MANIFEST.relative_to(ROOT).as_posix()
     for path in (ROOT / "toolchain/mii_assembly.html", ROOT / "runtime/mk8/graphics/ffx/LICENSE",
+                 ROOT / "runtime/mk8/windows.manifest", ROOT / "runtime/mk8/windows.rc",
                  *tracked(*PROVIDER_SOURCES)):
         yield path, path.relative_to(ROOT).as_posix()
     for path in tracked("runtime", "toolchain", "games/mk8d", "scripts", "docs/licenses"):

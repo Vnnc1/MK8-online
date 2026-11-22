@@ -48,6 +48,20 @@ In the game, open **F1 → Settings → Video** to choose a built-in scaler or a
 
 FSR 1 and bilinear filtering work out of the box. A rejected provider falls back to built-in scaling. The separate frame generation setting uses the runtime's own interpolation. Enable the FPS counter to compare game FPS, output FPS and milliseconds per game frame.
 
+## Upscaling and frame generation (optional)
+
+Nothing vendor-owned ships in the releases. The launcher downloads each component from the vendor's own pinned
+source/release after you accept their terms, verifies size and SHA-256, and — where no Linux binary exists — builds
+it locally from the vendor's or this project's sources:
+
+- **AMD FSR** — on Linux, FSR 3.1.6 and FSR 4.1.2 upscaling and FSR 3 / FSR 4 (MLFI) frame generation are built
+  locally from AMD's MIT-licensed FidelityFX SDK and this project's GPL-3.0 FSR 4.1.2 port. On Windows, AMD's signed
+  Vulkan DLLs are downloaded and verified. No AMD binary, shader or model is redistributed.
+- **NVIDIA DLSS** — Super Resolution and Frame Generation load NVIDIA's official NGX Linux plugins at runtime (an
+  RTX GPU and driver are required). DLSS 5 Neural Rendering has no public plugin and is not available.
+
+A release guard fails the build if any provider library, model bank or generated shader blob ends up in the packages.
+
 ## What's new in 0.4.0
 
 **Native online multiplayer with Nextendo.** Select **Play → Play on Nextendo** in the launcher, sign in through your browser, then open **Online Play → Worldwide → Race** in Mario Kart to race other players. Open **F1** in the game to see rooms and friends. Nextendo sessions use the original courses.
@@ -131,6 +145,8 @@ The runtime compensates slope-based depth bias for uniform internal-resolution s
 
 Performance fixes in 0.3.0 use the Windows high-resolution timer for bounded shader waits, apply that budget to the two-player split-screen scene, and cancel controller setup when fewer players are connected than requested. Rebuild the game/runtime to apply them. In the 0.3.0 release, for keyboard plus one gamepad in local multiplayer, enable **Controllers start at player 2** in Video and controls. First-use shader compilation can still cause pauses; these fixes do not qualify every CTGP track or multiplayer between PCs.
 
+An optional pipeline catalog (`MK8_PIPELINE_WARM=1`) records pipeline keys and shader bytes in `cache/pipeline_recipes2.bin` and replays them to recover a driver cache lost between sessions. It does not remove a course's first-ever compile: a controlled same-binary comparison found no warm-cache benefit (174 ms versus 178 ms race entry), so it stays off by default. First-visit shader/pipeline compilation and host CPU contention remain open.
+
 Version 0.3.0 integrates PRs #27–31 and #33: the local manual, replay readback, texture lifetime fixes, bounded shader support, private font imports, and Steam/Mii/DLC improvements. Commit `8202c32` also merged CTGP phase B (additional cups and its guest hooks). Integration checks and remaining limits are recorded in [STATUS.md](docs/STATUS.md).
 
 A bounded TMML.B adapter now translates the static texture-handle pattern found in the failed particle effects. Synthetic tests and three complete private shaders pass translation/SPIR-V checks; live rendering and the blur defect remain unqualified.
@@ -167,28 +183,34 @@ RatOne develops and maintains the MK8 adaptation, launcher and integration. The 
 
 ### Windows requirements
 
-- **Windows x64** and WebView2. The Launcher installs a private **Python 3.12 x64** by itself.
+- **Windows x64** with WebView2, or **Linux x86-64** with WebKitGTK 4.1. On Windows, the Launcher installs private Python 3.12 automatically. On Linux, install Python 3.12 with venv support and the native build dependencies below.
 - A GPU and driver exposing **Vulkan 1.3 or newer**. A general minimum CPU/GPU specification has not been qualified.
 - Your own base game, **4.0.1 update** and `prod.keys` from your console, or a supported extracted game folder.
 - About **28 GiB free** for extraction and preparation (including a 4 GiB safety reserve), plus room for tools and caches. An SSD is recommended.
 - Internet for the first tool download (about 0.4 GiB) and for updates.
 - **For Miis:** opening the creator downloads `AFLResHigh_2_3.dat` from an Internet Archive copy of the former Miitomo CDN. The Launcher verifies the ZIP and library by size and SHA-256, then caches the file privately for offline use. It is not bundled in GitHub or the installer. If the archive is unavailable, retry or select a compatible local file; without the library, options remain numbered and faces are not drawn.
-- **For multiplayer:** sign in to Steam and use a compatible 64-bit Steamworks DLL from a game you have installed. In this branch, the launcher tries the configured and local DLLs first, then searches installed Steam libraries if none provides the required exports. If the launcher reports a missing `SteamAPI_SteamFriends_v017`, set `MK8_STEAM_DLL` to the full path of a compatible `steam_api64.dll`, restart the launcher and open **Multiplayer** to check the friends list. The copy tested from Brawlhalla worked with 0.3.0. The copies tested from Counter-Strike 2 and Deadlock export `v018` and are rejected by 0.3.0. No Valve file is bundled.
+- **For multiplayer:** the **Steam** client, signed in, and any Steam game installed that ships the platform’s 64-bit Steamworks library (`steam_api64.dll` on Windows, `libsteam_api.so` on Linux); you can also place that library in the data folder. The launcher tries the configured and local libraries first, then searches installed Steam libraries if none provides the required exports. If the launcher reports a missing `SteamAPI_SteamFriends_v017`, set `MK8_STEAM_DLL` to the full path of a compatible library, restart the launcher and open **Multiplayer** to check the friends list. The copy tested from Brawlhalla worked with 0.3.0. The copies tested from Counter-Strike 2 and Deadlock export `v018` and are rejected by 0.3.0. No Valve file is bundled.
 
 ### Install and play
 
-1. Download `MK8-online-0.5.0-setup.exe` from [Releases](https://github.com/Vnnc1/MK8-online/releases) and choose the application and data folders. Installation is per user, without administrator rights. Already on an earlier version? Use **Support → Update now**: your data folder and saves are kept.
+1. Download your package from [Releases](https://github.com/Vnnc1/MK8-online/releases): run `MK8-online-0.5.0-setup.exe` on Windows. On Linux, mark the `*-linux-x86_64.AppImage` executable and open it, or extract the `*-linux-x86_64.tar.gz` and run `MK8-online/AppRun`. Choose the application and data folders in the app. Installation is per user, without administrator rights. When setup finishes, the same MK8-online window opens the launcher. Already on an earlier version? Use **Support → Update now**: your data folder and saves are kept.
 2. Open **Install**. Complete **Tools**, then select the base game and the update in **Game files** (the Launcher finds keys next to the game, or select your own).
 3. Run **Build the game**. After updating from an earlier version, build again: the game is recompiled with the new runtime.
 4. Choose **Play solo**.
 
-The Launcher's **Tools** step prepares private Python directly, without PowerShell or .NET ZIP loading. CPython comes from the pinned official NuGet package; archive and dependency hashes are checked. Interrupted environments are preserved before repair. Keep antivirus protection enabled.
+On Windows, the Launcher's **Tools** step prepares private Python directly, without PowerShell or .NET ZIP loading. CPython comes from the pinned official NuGet package; archive and dependency hashes are checked. Interrupted environments are preserved before repair. Keep antivirus protection enabled.
 
 An extracted folder must contain `exefs`, `romfs` and `control.nacp` (or `control/control.nacp`): choose **I already have an extracted game folder**. The active profile is 4.0.1 AArch64; other game versions and XCI/XCZ import are not validated. Supported DLC is imported separately.
 
 Data defaults to `%LOCALAPPDATA%\MK8-online` and survives updates and uninstalling. To use another drive with the portable launcher: `.\Launcher.exe --data-dir E:\MK8-Local`, and keep using the same folder.
 
 **Language:** the Launcher and installer offer **English**, **Português (Brasil)** and **Español** (**Language / Idioma**). The game's own language is separate.
+
+### Linux setup
+
+The Linux packages target Ubuntu 24.04 LTS and CachyOS. Install WebKitGTK 4.1, GTK 3, libarchive tools (`bsdtar`), curl, Python 3.12 with venv, Clang, LLD, LLVM, pkg-config, and the Vulkan, shaderc, and FFmpeg development packages. The Tools step installs the pinned Python wheels and prepares the pinned SDL3 and Vulkan headers when needed. On Ubuntu, it also needs CMake and the SDL X11, Wayland, ALSA, PulseAudio, and udev development dependencies listed in the Linux workflow. The AppImage can also run with `--appimage-extract-and-run` when FUSE is unavailable.
+
+The default data directory is `$XDG_DATA_HOME/MK8-online` or `~/.local/share/MK8-online`. Use the setup folder picker or `--data-dir` for a different location. Keep the tarball application's directory dedicated to MK8-online and store its data elsewhere. **Support → Update now** selects a matching Linux package, verifies its SHA-256, and restores the previous package if the update fails to start. Updates require write access to the application's directory.
 
 ### Create your Mii
 

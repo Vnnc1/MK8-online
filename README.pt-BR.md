@@ -48,6 +48,23 @@ No jogo, abra **F1 → Ajustes → Vídeo** para escolher a ampliação integrad
 
 FSR 1 e bilinear já vêm disponíveis. Se o provedor recusar o recurso, o jogo usa a ampliação integrada. A opção separada de geração de quadros usa a interpolação própria do runtime. Ative o contador para comparar os FPS do jogo, os FPS de saída e os milissegundos por quadro do jogo.
 
+## Upscaling e frame generation (opcional)
+
+Nada de propriedade de fornecedor vai nos pacotes. O launcher baixa cada componente da fonte/release oficial fixada
+pelo próprio fornecedor depois que você aceita os termos, confere tamanho e SHA-256 e, quando não existe binário
+para Linux, compila localmente a partir das fontes do fornecedor ou deste projeto:
+
+- **AMD FSR** — no Linux, upscaling FSR 3.1.6 e 4.1.2 e frame generation FSR 3 / FSR 4 (MLFI) são compilados
+  localmente a partir do SDK FidelityFX MIT da AMD e do port GPL-3.0 de FSR 4.1.2 deste projeto. No Windows, as DLLs
+  Vulkan assinadas da AMD são baixadas e verificadas. Nenhum binário, shader ou modelo da AMD é redistribuído.
+- **NVIDIA DLSS** — Super Resolution e Frame Generation carregam os plugins NGX oficiais para Linux em tempo de
+  execução (exigem GPU e driver RTX). DLSS 5 Neural Rendering não tem plugin público e não está disponível.
+- **Intel XeSS** — somente Windows, porque a Intel não publica biblioteca para Linux. Super Resolution está
+  implementado e verificado sob Wine; frame generation XeSS e XeLL são exclusivos de D3D12.
+
+Uma guarda de release falha o build se qualquer biblioteca de provider, banco de modelos ou blob de shader gerado
+entrar nos pacotes.
+
 ## Novidades da 0.4.0
 
 **Multijogador online nativo com o Nextendo.** Selecione **Jogar → Jogar no Nextendo** no launcher, entre na sua conta pelo navegador e abra **Online Play → Mundial → Corrida** no Mario Kart para jogar com outras pessoas. Pressione **F1** dentro do jogo para consultar salas e amigos. As sessões Nextendo usam as pistas originais.

@@ -130,7 +130,7 @@ Press **F1** or **Back + Start** to open the in-game menu. **Play** resumes or o
 
 The main menu's **Info** button opens a local **How to Play** window covering controls, drifting, items, assists and modes. Close it with **Back to game** or Esc.
 
-In the launcher, **Settings** covers video, audio, game language, button icons, controller order and keyboard/controller mapping. It shares `user-no-mii/mk8d.ini` with the F1 menu. **Game language** offers separate choices for Spanish (Spain) and Spanish (Latin America). **Save settings** applies changes on the next start. **Reload from game** reads values saved by the F1 menu. Settings cannot be saved while the game or a preparation is using the data.
+In the launcher, **Settings** covers video, audio, game language, button icons, controller order and keyboard/controller mapping. It shares `user-no-mii/mk8d.ini` with the F1 menu. **Game language** offers separate choices for Spanish (Spain), Spanish (Latin America), and Portuguese (Portugal). **Save settings** applies changes on the next start. **Reload from game** reads values saved by the F1 menu. Settings cannot be saved while the game or a preparation is using the data.
 
 **Video → Auto-hide cursor** is on by default. In fullscreen, the pointer hides after two seconds of inactivity. Mouse activity, opening the F1 menu, or leaving fullscreen restores it.
 

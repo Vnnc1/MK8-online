@@ -122,6 +122,8 @@ SDL-compatible controllers, the keyboard and Switch controllers are supported. S
 
 **Motion steering:** connect a controller that exposes a gyroscope and accelerometer to SDL. In the race pause menu, press **Y** to enable **Tilt Controls**, then hold the controller like a steering wheel.
 
+On Windows, the game can read motion from one Bluetooth Switch Pro Controller while Steam Input handles its buttons and sticks. The motion reader starts automatically. If the controller disconnects, reconnect it through Bluetooth to resume steering. If motion is unavailable with your setup, you can select **Disable Steam Input** in the game's **Properties → Controller** in Steam and restart to use the native controller. [Steam Input report #164](https://github.com/Vnnc1/MK8-online/issues/164)
+
 ## In-game menu and settings
 
 The Menu uses the theme chosen in the launcher (**Video → Menu theme**): Native, Simple Dark, Simple Light, NES Dark or NES Light. **F1**, **Home/Guide**, **Back + Start** and the main-menu wrench open it; **Shift+F1** opens the plain overlay. It follows the launcher's language.

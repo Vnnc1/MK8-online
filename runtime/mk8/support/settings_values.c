@@ -92,6 +92,7 @@ bool mk8_settings_values_request(int operation,int id,int value) {
        ((operation==SETTINGS_STEP || operation==SETTINGS_SET || operation==SETTINGS_ACTIVATE) && (id<0 || id>=BINDING+2*BIND_KEY_COUNT))) return false;
     if(operation==SETTINGS_SET && !(id==VOLUME && mk8_settings_volume_valid(value)) &&
        !(id==RUMBLE && value>=0 && value<=MK8_RUMBLE_MAX) &&
+       !(id==MK8_MENU_STICK_DEADZONE && value>=0 && value<=MK8_STICK_DEADZONE_MAX) &&
        !(id==CAMERA_DISTANCE && value>=MK8_CAMERA_DISTANCE_MIN && value<=MK8_CAMERA_DISTANCE_MAX)) return false;
     if(operation==SETTINGS_STEP && (id>=BINDING || id==RESET || id==SHADERS || (value!=-1 && value!=1))) return false;
     if(operation==SETTINGS_ACTIVATE && id!=RESET && id<BINDING) return false;
@@ -146,6 +147,15 @@ static void apply(Request r) {
         if(next<MK8_VOLUME_MIN) next=MK8_VOLUME_MIN;
         if(next>MK8_VOLUME_MAX) next=MK8_VOLUME_MAX;
         mk8_settings_set_volume_percent(next); dirty|=next!=pct; return;
+    }
+    if(r.id==MK8_MENU_STICK_DEADZONE) {
+        int current=mk8_stick_deadzone_percent();
+        int next=r.operation==SETTINGS_SET ? r.value : current+r.value;
+        if(next<0) next=0;
+        if(next>MK8_STICK_DEADZONE_MAX) next=MK8_STICK_DEADZONE_MAX;
+        mk8_set_stick_deadzone(next);
+        dirty|=next!=current;
+        return;
     }
     if(r.id==CAMERA_DISTANCE) {
         int current=mk8_settings_camera_distance();
@@ -244,6 +254,10 @@ void mk8_settings_values_sync(void) {
             snprintf(v->value,sizeof v->value,"%d%%",v->current);
         } else if(v->id==RUMBLE) {
             v->kind=SETTING_NUMBER; v->current=g_settings.rumble_intensity; v->minimum=0; v->maximum=MK8_RUMBLE_MAX;
+            snprintf(v->value,sizeof v->value,"%d%%",v->current);
+        } else if(v->id==MK8_MENU_STICK_DEADZONE) {
+            v->kind=SETTING_NUMBER; v->current=mk8_stick_deadzone_percent();
+            v->minimum=0; v->maximum=MK8_STICK_DEADZONE_MAX;
             snprintf(v->value,sizeof v->value,"%d%%",v->current);
         } else if(v->id==CAMERA_DISTANCE) {
             v->kind=SETTING_NUMBER; v->current=mk8_settings_camera_distance();

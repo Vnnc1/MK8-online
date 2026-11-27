@@ -74,11 +74,16 @@ fn rumble_percent(value: &str) -> Option<u8> {
     value.parse::<u8>().ok().filter(|percent| *percent <= 100)
 }
 
+fn valid_stick_deadzone(value: &str) -> bool {
+    value.bytes().all(|c| c.is_ascii_digit()) && value.parse::<u8>().is_ok_and(|n| n <= 50)
+}
+
 fn valid(schema: &Value, field: &Value, value: &str) -> bool {
     match field["kind"].as_str() {
         Some("bool") => matches!(value, "0" | "1"),
         Some("camera_distance") => valid_camera_distance(value),
         Some("percentage") => rumble_percent(value).is_some(),
+        Some("stick_deadzone") => valid_stick_deadzone(value),
         Some("volume") => value
             .parse::<f64>()
             .is_ok_and(|n| n.is_finite() && (0.0..=2.0).contains(&n)),
@@ -185,6 +190,12 @@ pub fn read(local: &Path, build: MenuBuild) -> Result<Value> {
         .is_some_and(valid_camera_distance)
     {
         values.insert("camera_distance".into(), json!("100"));
+    }
+    if !values["stick_deadzone"]
+        .as_str()
+        .is_some_and(valid_stick_deadzone)
+    {
+        values.insert("stick_deadzone".into(), json!("0"));
     }
     schema["values"] = Value::Object(values);
     Ok(schema)
@@ -559,6 +570,27 @@ mod tests {
         let values = read(&local).unwrap();
         assert_eq!(values["values"][key], "100");
         assert_eq!(values["values"]["volume"], "0.75");
+        assert_eq!(fs::read_to_string(&ini).unwrap(), invalid);
+        fs::remove_dir_all(local).unwrap();
+    }
+
+    #[test]
+    fn stick_deadzone_accepts_whole_percentages_and_defaults_to_zero() {
+        let local = std::env::temp_dir().join(format!("mk8-stick-deadzone-{}", std::process::id()));
+        let ini = local.join("user-no-mii/mk8d.ini");
+        let key = "stick_deadzone";
+        assert_eq!(read(&local).unwrap()["values"][key], "0");
+        for value in ["0", "17", "50"] {
+            write(&local, &json!({"stick_deadzone": value})).unwrap();
+            assert_eq!(read(&local).unwrap()["values"][key], value);
+        }
+        for value in ["-1", "51", "17.5", "+3", ""] {
+            assert!(write(&local, &json!({"stick_deadzone": value})).is_err());
+            assert_eq!(read(&local).unwrap()["values"][key], "50");
+        }
+        let invalid = "stick_deadzone = 999\n";
+        fs::write(&ini, invalid).unwrap();
+        assert_eq!(read(&local).unwrap()["values"][key], "0");
         assert_eq!(fs::read_to_string(&ini).unwrap(), invalid);
         fs::remove_dir_all(local).unwrap();
     }

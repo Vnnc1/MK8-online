@@ -12,6 +12,12 @@
         if (opt_int(rumble.label, &percent, 0, MK8_RUMBLE_MAX, MK8_RUMBLE_STEP, MK8_RUMBLE_MAX, "%d%%", rumble.help, NULL))
             mk8_rumble_set_intensity(percent);
     }
+    {
+        const Mk8MenuOption &deadzone = *mk8_menu_option(MK8_MENU_STICK_DEADZONE);
+        int percent = mk8_stick_deadzone_percent();
+        if (opt_int(deadzone.label, &percent, 0, MK8_STICK_DEADZONE_MAX, 1, 0, "%d%%", deadzone.help, NULL))
+            mk8_set_stick_deadzone(percent);
+    }
     ImGui::Spacing();
     header("System language");
     {

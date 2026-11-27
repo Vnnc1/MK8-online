@@ -33,6 +33,7 @@ int main(void) {
            g_settings.skip_intro, g_settings.show_memory, g_settings.ahead_fast,
            g_settings.prompts);
     printf("camera_distance=%d\n", mk8_settings_camera_distance());
+    printf("language=%s\n", settings_language());
     printf("rumble_intensity=%d\n", g_settings.rumble_intensity);
     bind_settings_save(stdout);
     settings_save();
@@ -71,6 +72,10 @@ class RuntimeSettingsTests(unittest.TestCase):
             self.assertEqual(baseline, run({}))
             self.assertEqual(baseline.splitlines()[0], "1.00 0 0 0 0 2 0 0")
             self.assertNotIn("bind_", baseline)
+            for code in ("es", "es-419"):
+                with self.subTest(language=code):
+                    self.assertIn(f"language={code}\n", run({"language": code}))
+                    self.assertIn(f"language = {code}", (folder / "mk8d.ini").read_text().splitlines())
             self.assertIn("rumble_intensity=100\n", baseline)
             for values, expected in (
                 ({"controller_vibration": "0 \t"}, 0),

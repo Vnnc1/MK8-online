@@ -2,6 +2,10 @@
 
 [Índice](README.md) · [English](../../en/log/integration.md)
 
+## Espanhol (América Latina) (#177)
+
+O NACP local da versão 4.0.1 declara esse idioma do jogo. As listas do launcher e do menu F1 oferecem o código correspondente, `es-419`. Na build Windows de 25 de novembro de 2026, com as duas correções de idioma (prefixo SHA-256 `df0d13b2`), o ensaio automatizado até o menu leu os arquivos de menu, mensagens e fonte em `UI/USes`.
+
 ## Perda do dispositivo ao iniciar corrida em uma Quadro M5000M (#165) — 26/11/2026
 
 Os dois logs da versão 0.6.3 na Quadro M5000M (`10de:13f8`, driver 582.53) registram `VK_ERROR_DEVICE_LOST` em `vkWaitSemaphores` durante o carregamento de uma corrida. O contorno de oclusão registrado imediatamente antes da falha já contava os resultados indisponíveis como visíveis. O driver não informou detalhes que identificassem o desenho responsável. A assinatura se parece com a de [#114](https://github.com/Vnnc1/MK8-online/issues/114). A correção de shader de [#7](https://github.com/Vnnc1/MK8-online/issues/7) movia as consultas invariáveis de tamanho de textura para antes do laço do shader e valia apenas para Pascal.

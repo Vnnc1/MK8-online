@@ -32,10 +32,12 @@ sudo apt install build-essential clang lld llvm cmake pkg-config python3.12-venv
   librsvg2-dev libdbus-1-dev libvulkan-dev libshaderc-dev libavcodec-dev libavformat-dev \
   libavutil-dev libswscale-dev libx11-dev libxext-dev libxfixes-dev libxrandr-dev libxcursor-dev \
   libxi-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libasound2-dev libpulse-dev \
-  libpipewire-0.3-dev libdecor-0-dev libudev-dev
+  libpipewire-0.3-dev libdecor-0-dev libudev-dev fonts-dejavu-core
 ```
 
 If the tools step must build SDL, install CMake and the development packages for your display and audio backends in the build environment. The Ubuntu list above includes these packages. For other distributions, see [SDL's Linux build dependencies](https://wiki.libsdl.org/SDL3/README-linux#build-dependencies).
+
+For the system font fallback, install DejaVu Sans in the environment where you run the game. The package is `fonts-dejavu-core` on Ubuntu and Debian, `ttf-dejavu` on Arch and CachyOS, and `dejavu-sans-fonts` on Fedora.
 
 ### Other distributions (Arch, CachyOS, Fedora)
 

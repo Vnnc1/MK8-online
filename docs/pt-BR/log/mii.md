@@ -2,6 +2,10 @@
 
 [Índice](README.md) · [English](../../en/log/mii.md)
 
+## Transferir um Mii salvo entre builds (#143)
+
+O editor do launcher oferece a importação e exportação existentes do CharInfo de 88 bytes do Switch. O teste em navegador com o launcher compilado conferiu os bytes baixados, a proteção contra duplicatas e a seleção do perfil importado com identidade e aparência originais.
+
 ## Criação do primeiro Mii bloqueada quando a prévia 3D falha (issue #149) — 26/11/2026
 
 O relato na versão 0.6.3 mostra o botão **Criar e personalizar** desabilitado no launcher em espanhol após digitar um nome. O relatório não inclui log do navegador. Bloquear o WebGL no Chromium reproduziu o botão desabilitado em um perfil novo na `fix-chore` em `5603bfb`. O editor inicializava o renderer WebGL antes de carregar o perfil, e uma falha do renderer deixava o formulário desabilitado.

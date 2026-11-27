@@ -2,6 +2,10 @@
 
 [Index](README.md) · [Português](../../pt-BR/log/mii.md)
 
+## Transfer a saved Mii between builds (#143)
+
+The launcher exposes its existing 88-byte Switch CharInfo import and export in the Mii editor. A browser test using the compiled launcher checked the downloaded bytes, duplicate protection and selection of an imported profile with its original identity and appearance.
+
 ## First Mii creation blocked when the 3D preview cannot start (issue #149) — 2026-11-26
 
 The 0.6.3 report shows a disabled **Create and customize** button in the Spanish launcher after entering a name. The report has no browser log. Blocking WebGL in Chromium reproduced the disabled button with a fresh profile on `fix-chore` at `5603bfb`. The editor initialized its WebGL renderer before loading the profile, so a renderer error left the form disabled.
